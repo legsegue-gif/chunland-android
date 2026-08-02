@@ -1,0 +1,19 @@
+# Gradle / 构建产物
+/.gradle/
+/build/
+/app/build/
+
+# 本机配置（SDK 路径）
+/local.properties
+
+# 真实配置：生产域名 / 签名 keystore 及口令 —— 绝不入库
+/config.properties
+*.keystore
+*.jks
+
+# IDE
+/.idea/
+/captures/
+*.iml
+
+.DS_Store

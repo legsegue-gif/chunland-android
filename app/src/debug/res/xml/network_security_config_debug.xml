@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- debug 全放行明文 HTTP（对齐 iOS Debug ATS 全放行；release 维持系统默认严格 HTTPS）。
+     原因：dev 图片 URL 由 server PUBLIC_BASE_URL 生成，可能指向宿主的任意内网地址；
+     具体主机地址不写死在本文件，故不做逐域名白名单。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

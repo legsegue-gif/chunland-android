@@ -1,0 +1,24 @@
+# 复制为 config.properties 后填入你自己的值（该文件已 gitignore，不会提交）。
+
+# 后端 API 主机名（不含 https:// 与 /api/v1）。release 构建连此主机。
+PROD_API_HOST=your-server.example.com
+
+# 应用 ID（可选，缺省 com.chunland.app）。
+# applicationId 每段必须以字母开头；改它不影响源码包名（namespace 独立）。
+# ⚠️ 一旦对外分发就不可再改 —— 老用户无法覆盖升级。
+#APPLICATION_ID=
+
+# debug 构建的 API 地址覆盖（可选）。不设则默认 http://10.0.2.2:3000/api/v1
+#（10.0.2.2 = 模拟器访问宿主机 localhost 的固定地址）。
+#DEBUG_API_BASE_URL=
+
+# 支付宝商户 App ID（可选）。客户端只消费服务端签好的 orderStr，代码不读此值。
+#ALIPAY_APP_ID=
+
+# release 签名（可选）。未配置时回退 debug 签名，仅供本地验证。
+# 生成：keytool -genkeypair -v -keystore release.keystore -alias chunland \
+#         -keyalg RSA -keysize 4096 -validity 36500
+#RELEASE_STORE_FILE=release.keystore
+#RELEASE_STORE_PASSWORD=
+#RELEASE_KEY_ALIAS=chunland
+#RELEASE_KEY_PASSWORD=

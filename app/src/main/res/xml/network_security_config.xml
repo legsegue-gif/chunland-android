@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- release 网络安全策略：维持系统默认严格 HTTPS（base-config 不放行明文），
+     仅给本机回环地址开明文豁免。debug 构建被 debug/AndroidManifest.xml 的全放行配置覆盖（tools:replace）。 -->
+<network-security-config>
+</network-security-config>

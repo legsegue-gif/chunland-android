@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 纯 Compose 应用：XML theme 只作启动壳，真正的主题在 ui/theme/Theme.kt -->
+    <style name="Theme.Chunland" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
