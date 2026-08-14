@@ -2,11 +2,9 @@ package com.chunland.app.core
 
 import android.content.Context
 import com.chunland.app.BuildConfig
-import com.chunland.app.core.ai.AiChatStore
-import com.chunland.app.core.ai.AiContext
-import com.chunland.app.core.ai.AiSettings
-import com.chunland.app.core.ai.AiToolRegistry
-import com.chunland.app.core.ai.ConversationStore
+import com.chunland.app.core.ai.AiRuntime
+import com.chunland.app.core.ai.tools.AgentToolRegistry
+import com.chunland.app.core.network.apiCall
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
@@ -52,48 +50,38 @@ class AppGraph(context: Context) {
 
     val feedEventTracker: FeedEventTracker by lazy { FeedEventTracker(feedApi, appScope) }
 
-    val aiSettings: AiSettings by lazy { AiSettings(appContext) }
-
     val storeAnchor: StoreAnchorStore by lazy { StoreAnchorStore(appContext) }
-
-    /** AI 工具注册表：handler 走本 graph 的 Retrofit（带 chunland token），与 AI endpoint 的裸 client 永不交叉 */
-    val aiToolRegistry: AiToolRegistry by lazy { AiToolRegistry(this) }
-
-    /** AI 多会话持久化（文件 JSON，属主隔离；决策理由见 ConversationStore 注释） */
-    val conversationStore: ConversationStore by lazy { ConversationStore(appContext) }
 
     /** 会话属主：登录用 userId，游客独立 "guest" 桶（读路径按属主过滤，绝不外泄他人历史） */
     val aiOwner: () -> String = { authManager.state.value.userId ?: "guest" }
 
-    val aiChatStore: AiChatStore by lazy {
-        AiChatStore(
-            aiSettings, appScope, aiToolRegistry,
-            { authManager.state.value.activeIdentity },
-            conversations = conversationStore,
+    /**
+     * AI 子系统装配点：库 / 凭证 / 来源配置 / 会话注册表全在里面。
+     *
+     * 工具 handler 走本 graph 的 Retrofit（带本项目 token），与 AI endpoint 的裸 client 永不交叉。
+     */
+    val aiRuntime: AiRuntime by lazy {
+        AiRuntime(
+            context = appContext,
+            scope = appScope,
+            executorFactory = { context ->
+                AgentToolRegistry(
+                    graph = this,
+                    scope = context.scope,
+                    suggested = context.tools,
+                    // 用闭包而不是快照：身份可能在会话存续期间被切换，
+                    // 工具可用集必须跟着变
+                    activeIdentity = { authManager.state.value.activeIdentity },
+                )
+            },
             ownerUserId = aiOwner,
+            // 画像片段：只聚合用户自己已有的数据（默认地址 + 常买品类）。
+            // 失败静默 —— 拿不到画像不该让整轮对话失败。
+            profileFragment = {
+                runCatching { apiCall { productApi.profileFragment() }.fragment }.getOrNull()
+            },
         )
     }
-
-    /** scoped ✨ 会话实例缓存：同 contextKey 进程内复用（续聊）；登出全清（不跨账号） */
-    private val scopedAiStores = mutableMapOf<String, AiChatStore>()
-
-    fun scopedAiStore(context: AiContext): AiChatStore =
-        scopedAiStores.getOrPut(context.contextKey ?: context.title) {
-            AiChatStore(
-                aiSettings, appScope, aiToolRegistry,
-                { authManager.state.value.activeIdentity }, context,
-                conversations = conversationStore,
-                ownerUserId = aiOwner,
-            ).also { store ->
-                // 跨进程续聊（对齐 iOS：同 contextKey 24h 内复用）；异步恢复，
-                // restoreIfEmpty 只在会话仍空白时生效，不覆盖用户已开始的输入
-                val key = context.contextKey ?: return@also
-                appScope.launch {
-                    conversationStore.latestByContextKey(aiOwner(), key, CONTEXT_RESUME_WINDOW_MS)
-                        ?.let { store.restoreIfEmpty(it) }
-                }
-            }
-        }
 
     // ── 可选集成装配（各自随模块存废）──
 
@@ -108,16 +96,9 @@ class AppGraph(context: Context) {
             authManager.state.drop(1).collect {
                 if (!it.isLoggedIn) {
                     followStore.reset()
-                    aiChatStore.reset()
-                    scopedAiStores.values.forEach { s -> s.reset() }
-                    scopedAiStores.clear()
+                    aiRuntime.resetForAccountChange()
                 }
             }
         }
-    }
-
-    private companion object {
-        /** scoped ✨ 跨进程续聊窗口（对齐 iOS 24h） */
-        const val CONTEXT_RESUME_WINDOW_MS = 24L * 60 * 60 * 1000
     }
 }

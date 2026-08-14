@@ -64,6 +64,13 @@ android {
         buildConfig = true
     }
 
+    testOptions {
+        // 单测跑在 JVM 上，android.util.Log 是空壳会抛 "not mocked"。
+        // 本项目的单测全是纯逻辑（循环检测、管道、分词、wire 编码），
+        // 让 android.* 的桩方法返回默认值即可，不必为了日志去引 mock 框架。
+        unitTests.isReturnDefaultValues = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

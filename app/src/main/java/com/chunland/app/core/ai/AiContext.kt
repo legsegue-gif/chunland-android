@@ -1,9 +1,30 @@
 package com.chunland.app.core.ai
 
+import com.chunland.app.core.ai.prompt.AiPrompts
+import com.chunland.app.core.ai.tools.AiToolName
+
+/**
+ * 工具执行的结构化作用域（对齐 iOS AIToolScope）。
+ *
+ * seedNote 是喂给模型的散文（模型可以理解错、也可以不理会）；这个是工具执行时的硬约束。
+ * 进店等场景据此把查询真正限定到当前商家 ——「搜索默认作用于当前店」必须由代码兑现，
+ * 不能靠提示词许愿（否则模型会把全局结果一本正经地当成本店数据，见进店 ✨ 编造目录 bug）。
+ */
+data class AiToolScope(
+    /** 当前进店商家 id（null = 全局，不限定） */
+    val merchantId: Int? = null,
+    /** 商家名（仅用于工具输出文案，如「在 X 店内找到…」） */
+    val merchantName: String? = null,
+) {
+    companion object {
+        val GLOBAL = AiToolScope()
+    }
+}
+
 /**
  * 页面与 AI 之间「唯一的耦合面」（纯值，对齐 iOS AIContext）。
- * 页面唤起 scoped AI 时只产出一个 AiContext（经 AppGraph.scopedAiStore 换会话实例），
- * 不持有任何 AI 逻辑/工具/模型接线。
+ * 任何页面唤起 AI 时只产出一个 AiContext（经会话注册表换到一个会话实例），
+ * 不持有任何 AI 逻辑/工具/模型接线 —— 这是「换掉内脏不波及页面」的关键。
  *
  * 字段职责显式分开：
  * - title      : sheet 头部展示（「✨ 店名」）
@@ -12,8 +33,8 @@ package com.chunland.app.core.ai
  * - tools      : 建议的工具子集（null = 当前身份全量；registry 再与身份可用集取交）
  * - scope      : 工具执行的结构化作用域（给代码，不是给模型）——「搜索默认作用于本店」
  *                必须由它兑现，绝不许只写进 seedNote 许愿（iOS 编造店铺目录 bug 根因）
- * - contextKey : 会话续聊的稳定 key（如 "store:1"）。同 key 进程内复用同一会话实例；
- *                跨进程持久化随「AI 多会话持久化」后置
+ * - contextKey : 会话续聊的稳定 key（如 "store:1"）。同 key 复用同一会话实例，
+ *                且 24h 内的历史会话会被续聊命中（跨进程，落库）
  */
 data class AiContext(
     val title: String,
@@ -25,17 +46,40 @@ data class AiContext(
 ) {
     companion object {
         /**
-         * 进店 ✨（对齐 iOS AIContext.store 的 in-store 分支）：全量消费者工具，
-         * search_products / get_categories 经 scope 硬限定到该店。
+         * 店铺选择页 / 进店 ✨（对齐 iOS AIContext.store）：全量消费者工具（入口宽泛，不预设范围）。
+         *
+         * merchantId 非空（已进店）→ search_products / get_categories 经 [AiToolScope] 硬限定到该店；
+         * 为 null（店铺选择页）→ 全局，不限定。
          */
-        fun store(merchantId: Int, merchantName: String): AiContext = AiContext(
-            title = merchantName,
-            seedNote = "用户正在逛「$merchantName」。可帮其搜索商品、查看分类、加购下单；" +
-                "search_products / get_categories 已自动限定在该店范围内，返回的就是本店数据。",
-            welcome = "想在「$merchantName」买点什么？我可以帮你搜商品、加购、下单。",
-            tools = null,
-            scope = AiToolScope(merchantId = merchantId, merchantName = merchantName),
-            contextKey = "store:$merchantId",
+        fun store(merchantId: Int? = null, merchantName: String? = null): AiContext {
+            val label = merchantName?.let { "「$it」" } ?: "店铺"
+            return AiContext(
+                title = merchantName ?: "选购助手",
+                seedNote = if (merchantId != null) {
+                    "用户正在逛$label。可帮其搜索商品、查看分类、加购下单；" +
+                        "search_products / get_categories 已自动限定在该店范围内，返回的就是本店数据。"
+                } else {
+                    "用户正在逛$label。可帮其搜索商品、查看分类、加购下单。"
+                },
+                welcome = "想在${label}买点什么？我可以帮你搜商品、加购、下单。",
+                tools = null,
+                scope = AiToolScope(merchantId = merchantId, merchantName = merchantName),
+                contextKey = merchantId?.let { "store:$it" } ?: "store",
+            )
+        }
+
+        /** 购物车页 ✨（对齐 iOS AIContext.cart）：看购物车 / 凑单 / 直接下单。 */
+        fun cart(): AiContext = AiContext(
+            title = "购物车",
+            seedNote = "用户正在查看购物车。涉及购物车内容请每次调用 get_cart 获取最新数据，" +
+                "不要复用历史结果。",
+            welcome = "需要我帮你看看购物车、凑单或直接下单吗？",
+            tools = setOf(
+                AiToolName.GET_CART,
+                AiToolName.SEARCH_PRODUCTS,
+                AiToolName.PLACE_ORDER,
+            ),
+            contextKey = "cart",
         )
 
         /**
@@ -90,7 +134,7 @@ data class AiContext(
                 seedNote = "用户是商家，正在管理$label。帮其做商品分类：先 list_store_products " +
                     "拿商品、list_category_schemes 看现有方案；建新方案用 create_category_scheme" +
                     "（会弹确认）；归类用 assign_category_products（每个分类调用一次、给该分类" +
-                    "全量商品 code，整体替换语义）。归类要覆盖全部商品，不确定归属的放最接近的分类。",
+                    "全量商品 code，整体替换语义）。\n\n" + AiPrompts.classificationRules,
                 welcome = "我可以帮你打理店铺分类——比如说「按吃穿住行用给我的店分类」，" +
                     "我会生成方案并把商品归好类（执行前会请你确认）。",
                 tools = setOf(

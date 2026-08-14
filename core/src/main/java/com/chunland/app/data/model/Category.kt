@@ -13,4 +13,6 @@ data class Category(
     val sequence: Int = 0,
     val parentCode: String? = null,
     val children: List<Category> = emptyList(),
+    /** 在售商品数，仅 withCounts=true 时下发；父节点的计数含其子节点 */
+    val productCount: Int? = null,
 )

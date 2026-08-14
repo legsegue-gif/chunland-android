@@ -1,7 +1,7 @@
 # Gradle / 构建产物
+# 用 **/build/ 而不是逐个列 module —— 逐个列的话，新增 module 的产物默认漏网
 /.gradle/
-/build/
-/app/build/
+**/build/
 
 # 本机配置（SDK 路径）
 /local.properties

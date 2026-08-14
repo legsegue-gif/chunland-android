@@ -61,7 +61,7 @@ import com.chunland.app.feature.agent.AgentWorkbenchScreen
 import com.chunland.app.feature.agent.HallScreen
 import com.chunland.app.feature.agent.PurchaseListScreen
 import com.chunland.app.feature.agent.SettlementsScreen
-import com.chunland.app.feature.ai.AiChatScreen
+import com.chunland.app.feature.ai.AgentAiScreen
 import com.chunland.app.feature.auth.LoginScreen
 import com.chunland.app.feature.cart.CartScreen
 import com.chunland.app.feature.checkout.AddressFormScreen
@@ -367,7 +367,7 @@ private fun TabsScreen(
                     onOpenSchemes = onOpenMerchantSchemes,
                 )
                 1 -> MerchantOrdersScreen(graph, padding, snackbar)
-                2 -> AiChatScreen(graph, padding, snackbar)
+                2 -> AgentAiScreen(graph, padding, snackbar)
                 else -> profilePane(padding)
             }
             agentLayout -> when (tab) {
@@ -377,7 +377,7 @@ private fun TabsScreen(
                     onOpenPurchaseList = onOpenPurchaseList,
                 )
                 1 -> HallScreen(graph, padding, snackbar, onOpenOrder = onOpenOrder)
-                2 -> AiChatScreen(graph, padding, snackbar)
+                2 -> AgentAiScreen(graph, padding, snackbar)
                 else -> profilePane(padding)
             }
             else -> when (tab) {
@@ -389,7 +389,7 @@ private fun TabsScreen(
                     reselectSignal = feedReselect,
                 )
                 1 -> StoreListScreen(graph, padding, onOpenStore)
-                2 -> AiChatScreen(graph, padding, snackbar)
+                2 -> AgentAiScreen(graph, padding, snackbar)
                 3 -> if (authState.isLoggedIn) {
                     CartScreen(graph, padding, snackbar, onCheckout = onCheckout)
                 } else {

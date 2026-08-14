@@ -33,10 +33,30 @@ data class Pagination(
     val totalPages: Int,
 )
 
+/**
+ * 符合当前筛选条件的价格分布，仅 withStats=true 时下发。
+ *
+ * 给 AI 用：知道区间才能判断「这个价位算便宜还是贵」，省一轮试探性查询。
+ */
+@Serializable
+data class ProductStats(
+    val minPrice: Double? = null,
+    val maxPrice: Double? = null,
+    val avgPrice: Double? = null,
+    val inStockCount: Int = 0,
+)
+
 @Serializable
 data class ProductListResponse(
     val items: List<ProductSummary> = emptyList(),
     val pagination: Pagination,
+    val stats: ProductStats? = null,
+)
+
+/** 用户画像片段（AI system prompt 注入用）。无可说内容时 fragment 为 null */
+@Serializable
+data class ProfileFragment(
+    val fragment: String? = null,
 )
 
 @Serializable
