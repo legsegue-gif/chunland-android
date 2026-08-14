@@ -60,7 +60,7 @@ import com.chunland.app.core.AppGraph
 import com.chunland.app.core.network.serverOrigin
 import com.chunland.app.core.network.userMessage
 import com.chunland.app.data.model.UserProfile
-import com.chunland.app.feature.ai.AiConfigSheet
+import com.chunland.app.feature.ai.AiProviderSettingsSheet
 import com.chunland.app.feature.report.ReportSheet
 import kotlinx.coroutines.launch
 
@@ -246,13 +246,14 @@ fun ProfileScreen(
             ProfileRow(Icons.Filled.Storefront, "我要开店", onClick = onOpenStoreForm)
         }
 
-        // AI 配置（key 只存本机，对话直连用户 endpoint）。
-        // 来源摘要：系统提供 / 自定义 · 模型名 / 未配置（运行状态感知收在配置页内，对齐 iOS aiConfigSummary）
-        val aiSummary = when {
-            graph.aiSettings.systemActive -> "系统提供"
-            graph.aiSettings.isConfigured -> "自定义 · ${graph.aiSettings.model}"
-            graph.aiSettings.baseUrl.isNotBlank() -> "自定义"
-            else -> "未配置"
+        // AI 配置（密钥只存本机，对话直连用户 endpoint）。
+        // 摘要 = 降级链里首选那一档的名字；运行状态感知收在配置页内。
+        var aiSummary by remember { mutableStateOf("") }
+        LaunchedEffect(showAiConfig) {
+            // 关掉配置页回来要刷新 —— 用户很可能刚改过来源
+            if (!showAiConfig) {
+                aiSummary = runCatching { graph.aiRuntime.preferredSourceLabel() }.getOrDefault("未配置")
+            }
         }
         ProfileRow(Icons.Filled.AutoAwesome, "配置 AI API", value = aiSummary) { showAiConfig = true }
 
@@ -317,7 +318,7 @@ fun ProfileScreen(
     }
 
     if (showAiConfig) {
-        AiConfigSheet(graph = graph, onDismiss = { showAiConfig = false })
+        AiProviderSettingsSheet(graph = graph, onDismiss = { showAiConfig = false })
     }
     if (showReport) {
         ReportSheet(graph = graph, targetType = "general", onDismiss = { showReport = false })

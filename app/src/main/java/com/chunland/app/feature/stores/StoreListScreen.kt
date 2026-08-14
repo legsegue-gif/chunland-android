@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Storefront
@@ -24,6 +25,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -47,6 +49,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.chunland.app.core.AppGraph
+import com.chunland.app.core.ai.AiContext
 import com.chunland.app.core.StoreAnchorStore
 import com.chunland.app.core.auth.AuthManager
 import com.chunland.app.core.network.absoluteMediaUrl
@@ -57,6 +60,7 @@ import com.chunland.app.data.api.MerchantApi
 import com.chunland.app.data.api.RegionApi
 import com.chunland.app.data.model.Merchant
 import com.chunland.app.data.model.Region
+import com.chunland.app.feature.ai.ScopedAiSheet
 import kotlinx.coroutines.launch
 
 // 对齐 iOS HomeView（店铺选择页）：商家卡片列表 → 点卡进店。
@@ -132,22 +136,34 @@ fun StoreListScreen(
     }
     var showPicker by remember { mutableStateOf(false) }
     var farExpanded by rememberSaveable { mutableStateOf(false) }
+    var showAi by remember { mutableStateOf(false) }
 
-    when {
-        vm.merchants.isNotEmpty() -> {
-            // 近/远分组：仅当 server 给了距离才分（未设 anchor 全走 near 原样展示）
-            val near = vm.merchants.filter { (it.distanceKm ?: 0.0) <= NEARBY_RADIUS_KM }
-            val far = vm.merchants.filter { (it.distanceKm ?: 0.0) > NEARBY_RADIUS_KM }
+    Column(Modifier.fillMaxSize().padding(top = contentPadding.calculateTopPadding())) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp),
+        ) {
+            Text("店铺", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+            // ✨ 全局选购助手（不限定店铺，与进店 ✨ 的圈店语境相对）
+            IconButton(onClick = { showAi = true }) {
+                Icon(Icons.Filled.AutoAwesome, contentDescription = "AI 选购助手")
+            }
+        }
 
-            LazyColumn(
-                contentPadding = PaddingValues(
-                    start = 16.dp, end = 16.dp,
-                    top = contentPadding.calculateTopPadding() + 8.dp,
-                    bottom = contentPadding.calculateBottomPadding() + 8.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxSize(),
-            ) {
+        when {
+            vm.merchants.isNotEmpty() -> {
+                // 近/远分组：仅当 server 给了距离才分（未设 anchor 全走 near 原样展示）
+                val near = vm.merchants.filter { (it.distanceKm ?: 0.0) <= NEARBY_RADIUS_KM }
+                val far = vm.merchants.filter { (it.distanceKm ?: 0.0) > NEARBY_RADIUS_KM }
+
+                LazyColumn(
+                    contentPadding = PaddingValues(
+                        start = 16.dp, end = 16.dp, top = 8.dp,
+                        bottom = contentPadding.calculateBottomPadding() + 8.dp,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
                 item(key = "anchor") {
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -204,18 +220,30 @@ fun StoreListScreen(
                         }
                     }
                 }
+                }
+            }
+            vm.loading -> Box(
+                Modifier.fillMaxSize().padding(bottom = contentPadding.calculateBottomPadding()),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+            else -> Box(
+                Modifier.fillMaxSize().padding(bottom = contentPadding.calculateBottomPadding()),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(vm.error ?: "暂无店铺", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.padding(6.dp))
+                    OutlinedButton(onClick = vm::load) { Text("重试") }
+                }
             }
         }
-        vm.loading -> Box(Modifier.fillMaxSize().padding(contentPadding), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
-        else -> Box(Modifier.fillMaxSize().padding(contentPadding), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(vm.error ?: "暂无店铺", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.padding(6.dp))
-                OutlinedButton(onClick = vm::load) { Text("重试") }
-            }
-        }
+    }
+
+    if (showAi) {
+        // 全局作用域（不传 merchantId）—— 与进店 ✨ 的圈店语境相对
+        ScopedAiSheet(graph, AiContext.store(), onDismiss = { showAi = false })
     }
 
     if (showPicker) {

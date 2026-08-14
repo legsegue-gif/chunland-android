@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Remove
@@ -48,8 +49,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.chunland.app.core.AppGraph
+import com.chunland.app.core.ai.AiContext
 import com.chunland.app.core.network.absoluteMediaUrl
 import com.chunland.app.data.model.CartItem
+import com.chunland.app.feature.ai.ScopedAiSheet
 import com.chunland.app.feature.checkout.CheckoutDraft
 import com.chunland.app.ui.formatPrice
 
@@ -62,6 +65,7 @@ fun CartScreen(
 ) {
     val vm: CartViewModel = viewModel { CartViewModel(graph.cartApi, graph.configApi) }
     var pendingDelete by remember { mutableStateOf<CartItem?>(null) }
+    var showAi by remember { mutableStateOf(false) }
 
     // 每次进入购物车 tab 都重新拉取（价格/库存可能已变）
     LaunchedEffect(Unit) { vm.reload() }
@@ -73,15 +77,28 @@ fun CartScreen(
     }
 
     val cart = vm.cart
-    when {
-        cart == null -> Box(Modifier.fillMaxSize().padding(contentPadding), contentAlignment = Alignment.Center) {
+    Column(Modifier.fillMaxSize().padding(top = contentPadding.calculateTopPadding())) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp),
+        ) {
+            Text("购物车", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+            // ✨ 购物车助手：看车、凑单、直接下单
+            IconButton(onClick = { showAi = true }) {
+                Icon(Icons.Filled.AutoAwesome, contentDescription = "AI 助手")
+            }
+        }
+
+        val bottom = contentPadding.calculateBottomPadding()
+        when {
+        cart == null -> Box(Modifier.fillMaxSize().padding(bottom = bottom), contentAlignment = Alignment.Center) {
             if (vm.loading) CircularProgressIndicator()
             else Text("加载失败，切换 tab 重试", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        cart.items.isEmpty() -> Box(Modifier.fillMaxSize().padding(contentPadding), contentAlignment = Alignment.Center) {
+        cart.items.isEmpty() -> Box(Modifier.fillMaxSize().padding(bottom = bottom), contentAlignment = Alignment.Center) {
             Text("购物车是空的，去店铺逛逛吧", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        else -> Column(Modifier.fillMaxSize().padding(contentPadding)) {
+        else -> Column(Modifier.fillMaxSize().padding(bottom = bottom)) {
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(16.dp),
@@ -170,6 +187,11 @@ fun CartScreen(
                 }
             }
         }
+        }
+    }
+
+    if (showAi) {
+        ScopedAiSheet(graph, AiContext.cart(), onDismiss = { showAi = false })
     }
 
     pendingDelete?.let { item ->

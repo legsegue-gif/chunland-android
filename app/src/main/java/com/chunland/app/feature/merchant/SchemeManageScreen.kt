@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -53,11 +52,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.chunland.app.core.AppGraph
-import com.chunland.app.core.ai.AiContext
 import com.chunland.app.core.network.apiCall
 import com.chunland.app.core.network.apiCallUnit
 import com.chunland.app.core.network.userMessage
-import com.chunland.app.feature.ai.ScopedAiSheet
 import com.chunland.app.data.model.AddCategoryRequest
 import com.chunland.app.data.model.CategoryScheme
 import com.chunland.app.data.model.CreateSchemeRequest
@@ -88,7 +85,6 @@ fun SchemeManageScreen(graph: AppGraph, onBack: () -> Unit) {
     var refreshKey by remember { mutableIntStateOf(0) }
 
     // 各类编辑目标（互斥弹层）
-    var showAi by remember { mutableStateOf(false) }
     var showCreateScheme by remember { mutableStateOf(false) }
     var renameScheme by remember { mutableStateOf<CategoryScheme?>(null) }
     var deleteScheme by remember { mutableStateOf<CategoryScheme?>(null) }
@@ -124,9 +120,6 @@ fun SchemeManageScreen(graph: AppGraph, onBack: () -> Unit) {
                     }
                     Text("分类方案", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                     // ✨ AI 起草分类（对齐 iOS AI 起草语义：模型建方案/归类，HITL 确认后落库）
-                    IconButton(onClick = { showAi = true }) {
-                        Icon(Icons.Filled.AutoAwesome, contentDescription = "AI 起草分类")
-                    }
                     IconButton(onClick = { showCreateScheme = true }) {
                         Icon(Icons.Filled.Add, contentDescription = "建方案")
                     }
@@ -203,16 +196,6 @@ fun SchemeManageScreen(graph: AppGraph, onBack: () -> Unit) {
     }
 
     // 建方案 / 方案改名 / 分类改名 / 加分类：共用单输入弹窗
-    if (showAi) {
-        ScopedAiSheet(
-            graph = graph,
-            context = AiContext.merchantConsole(),
-            onDismiss = {
-                showAi = false
-                refreshKey++   // AI 建的方案/归类落库后回来即见
-            },
-        )
-    }
     if (showCreateScheme) {
         NameInputDialog(
             title = "新建方案",

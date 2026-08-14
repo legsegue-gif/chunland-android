@@ -159,6 +159,12 @@ data class CreatePostRequest(
 @Serializable
 data class CreateSchemeRequest(
     val name: String,
+    /**
+     * 方案来源（`manual` / `ai`），供 AI 分类溯源。
+     * 缺省不发该键（`explicitNulls = false`），服务端按 manual 落库 ——
+     * 服务端只认这两个字面量，发 null 会被判为非法值。
+     */
+    val origin: String? = null,
 )
 
 /** null 字段不发 = 不改（explicitNulls=false） */
@@ -195,10 +201,17 @@ data class SchemeCategoryProducts(
     val productCodes: List<String> = emptyList(),
 )
 
-/** 整体替换（编辑器保存语义），assignedBy 缺省 manual */
+/**
+ * 整体替换（编辑器保存语义）。
+ *
+ * assignedBy 记归类来源（`manual` / `ai`），供 AI 分类溯源；
+ * 缺省不发该键（`explicitNulls = false`），服务端按 manual 落库 ——
+ * 服务端只认这两个字面量，发 null 会被判为非法值。
+ */
 @Serializable
 data class SetCategoryProductsRequest(
     val codes: List<String>,
+    val assignedBy: String? = null,
 )
 
 // ---- 经营数据（纯读）。GMV 口径 = 非取消/退款订单货值 ----

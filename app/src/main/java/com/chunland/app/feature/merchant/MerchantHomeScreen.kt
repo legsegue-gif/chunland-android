@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storefront
@@ -58,6 +59,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.chunland.app.core.AppGraph
+import com.chunland.app.core.ai.AiContext
+import com.chunland.app.feature.ai.ScopedAiSheet
 import com.chunland.app.core.network.absoluteMediaUrl
 import com.chunland.app.core.network.apiCall
 import com.chunland.app.core.network.userMessage
@@ -108,6 +111,7 @@ fun MerchantHomeScreen(
     var showCreate by remember { mutableStateOf(false) }
     var editTarget by remember { mutableStateOf<MerchantProduct?>(null) }
     var showSettings by remember { mutableStateOf(false) }
+    var showAi by remember { mutableStateOf(false) }
 
     // 店铺 logo：选中即上传（raw 二进制，与凭证同口径），上传即生效
     val context = LocalContext.current
@@ -159,6 +163,10 @@ fun MerchantHomeScreen(
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.weight(1f),
             )
+            // ✨ 店铺助手（AI 分类）：挂商家首页，与 iOS 商家布局 tab 0 对齐
+            IconButton(onClick = { showAi = true }, enabled = store != null) {
+                Icon(Icons.Filled.AutoAwesome, contentDescription = "AI 店铺助手")
+            }
             IconButton(onClick = { showSettings = true }, enabled = store != null) {
                 Icon(Icons.Filled.Settings, contentDescription = "店铺设置")
             }
@@ -236,6 +244,16 @@ fun MerchantHomeScreen(
             store = s,
             onDismiss = { showSettings = false },
             onSaved = { showSettings = false; refreshKey++ },
+        )
+    }
+    if (showAi) {
+        ScopedAiSheet(
+            graph = graph,
+            context = AiContext.merchantConsole(s?.name),
+            onDismiss = {
+                showAi = false
+                refreshKey++   // AI 建的方案/归类落库后回来即见
+            },
         )
     }
 }
