@@ -65,21 +65,6 @@ enum class AiToolName(val wire: String) {
     fun allowedFor(identity: String): Boolean = identity in allowedIdentities
 
     /**
-     * 实时类工具 —— 结果随时间失效（购物车 / 订单 / 接单 / 店铺快照）。
-     *
-     * 上下文治理据此把旧轮的这类结果换成过期占位，物理杜绝模型复用过期数据；
-     * 搜索/详情/分类结果刻意不折叠（prompt 明确允许复用），
-     * 变更类的简短确认文本（含订单号）保留作对话叙事。
-     */
-    val resultVolatile: Boolean
-        get() = when (this) {
-            GET_CART, LIST_MY_ORDERS, GET_ORDER_DETAIL,
-            LIST_MY_CLAIMS, BUILD_PURCHASE_LIST, SUMMARIZE_SETTLEMENTS,
-            LIST_STORE_PRODUCTS, LIST_CATEGORY_SCHEMES -> true
-            else -> false
-        }
-
-    /**
      * 工具指示器的中文名（UI 用）。
      *
      * 挂在枚举上 = 单一真相源，任意处都能直接读，避免重复 switch。
