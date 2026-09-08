@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -39,11 +40,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.chunland.app.core.AppGraph
 import com.chunland.app.core.network.userMessage
 import com.chunland.app.data.model.UserProfile
+import com.chunland.app.ui.OTP_LENGTH
+import com.chunland.app.ui.sanitizeOtp
+import com.chunland.app.ui.smsOtpAutofill
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -244,10 +249,12 @@ private fun BindContactSheet(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = code,
-                    onValueChange = { v -> code = v.filter { it.isDigit() }.take(6) },
+                    onValueChange = { code = sanitizeOtp(it) },
                     label = { Text("验证码") },
+                    // 数字键盘本页原先漏了（另两处都有），对齐 iOS 的 .keyboardType(.numberPad)
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).smsOtpAutofill(),
                 )
                 TextButton(
                     enabled = cooldown == 0 && !busy && target.trim().isNotEmpty(),
@@ -270,7 +277,7 @@ private fun BindContactSheet(
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
             Button(
-                enabled = !busy && target.trim().isNotEmpty() && code.length == 6,
+                enabled = !busy && target.trim().isNotEmpty() && code.length == OTP_LENGTH,
                 onClick = {
                     scope.launch {
                         busy = true

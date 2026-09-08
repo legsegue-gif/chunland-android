@@ -1,16 +1,6 @@
 package com.chunland.app.core.ai.tools
 
 import com.chunland.app.core.AppGraph
-import com.chunland.app.core.ai.loop.AgentMutationIntent
-import com.chunland.app.core.ai.loop.AgentPreparedMutation
-import com.chunland.app.core.network.apiCall
-import com.chunland.app.data.model.AddCartItemRequest
-import com.chunland.app.data.model.Category
-import com.chunland.app.data.model.DeliveryAddress
-import com.chunland.app.data.model.PlaceOrderRequest
-import com.chunland.app.data.model.QuoteRequest
-import com.chunland.app.data.model.orderStatusLabel
-import java.util.UUID
 
 /**
  * 买家域工具：商品 / 购物车 / 订单（对齐 iOS AgentShoppingTools.swift）。
@@ -51,42 +41,9 @@ private fun productSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
             ),
         ),
         kind = AiToolName.Kind.READ_ONLY,
-        run = { args, scope ->
-            val limit = (args.int("limit") ?: 10).coerceIn(1, 20)
-            val resp = apiCall {
-                graph.productApi.list(
-                    limit = limit,
-                    category = args.string("category"),
-                    keyword = args.string("query"),
-                    merchant = scope.merchantId,
-                    priceMin = args.double("price_min"),
-                    priceMax = args.double("price_max"),
-                    inStock = if (args.bool("in_stock") == true) true else null,
-                    sort = args.string("sort"),
-                    // 精简字段：一次 20 条，完整字段会吃掉大量上下文，
-                    // 而挑商品只需要「叫什么、多少钱、有没有货」
-                    fields = "compact",
-                    withStats = true,
-                )
-            }
-            val place = scope.merchantName?.let { "在「$it」店内" } ?: ""
-            if (resp.items.isEmpty()) {
-                "${place}没有找到匹配的商品。可以放宽条件再试（比如去掉价格限制或换个关键词）。"
-            } else {
-                val shown = resp.items.take(limit)
-                val lines = shown.joinToString("\n") {
-                    "[${it.code}] ${it.name} ¥${agentMoney(it.currentPrice)} ${if (it.outOfStock) "缺货" else "有货"}"
-                }
-                var out = "${place}找到 ${resp.pagination.total} 个商品（展示前 ${shown.size} 个）：\n$lines"
-                // 价格分布让模型能判断「这个价位算便宜还是贵」，省一轮试探
-                val stats = resp.stats
-                if (stats != null && resp.pagination.total > limit) {
-                    out += "\n（符合条件的商品价格 ¥${agentMoney(stats.minPrice ?: 0.0)}–" +
-                        "¥${agentMoney(stats.maxPrice ?: 0.0)}，其中 ${stats.inStockCount} 件有货）"
-                }
-                out
-            }
-        },
+        remote = true,
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：search_products 的工具体在服务端，不应走本地执行。" },
     ),
 
     AgentToolSpec(
@@ -98,16 +55,9 @@ private fun productSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
             required = listOf("code"),
         ),
         kind = AiToolName.Kind.READ_ONLY,
-        run = { args, _ ->
-            val p = apiCall { graph.productApi.detail(args.string("code") ?: "") }
-            """
-            商品：${p.name}
-            价格：¥${agentMoney(p.currentPrice)}
-            库存：${p.stockStatus ?: "未知"}
-            单位：${p.unitType ?: "-"}
-            随机重量：${if (p.randomWeight) "是（按实重计价）" else "否"}
-            """.trimIndent()
-        },
+        remote = true,
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：get_product_detail 的工具体在服务端，不应走本地执行。" },
     ),
 
     AgentToolSpec(
@@ -118,25 +68,9 @@ private fun productSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
                 "（店铺上下文中返回当前店铺自己的分类）",
         ),
         kind = AiToolName.Kind.READ_ONLY,
-        run = { _, scope ->
-            val cats = apiCall { graph.categoryApi.tree(merchant = scope.merchantId, withCounts = true) }
-            fun label(c: Category): String {
-                val count = c.productCount?.let { "，$it 件" } ?: ""
-                return "${c.name}（${c.code}$count）"
-            }
-            // 进店：返回该店自有分类；店铺没有分类导航时如实说，
-            // 绝不回落全局树冒充本店分类
-            if (scope.merchantId != null) {
-                val place = scope.merchantName?.let { "「$it」" } ?: "该店铺"
-                if (cats.isEmpty()) {
-                    "${place}没有分类导航，可用 search_products 直接搜索店内商品。"
-                } else {
-                    "${place}的分类：" + cats.take(15).joinToString("、", transform = ::label)
-                }
-            } else {
-                cats.filter { it.level == 1 }.take(10).joinToString("、", transform = ::label)
-            }
-        },
+        remote = true,
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：get_categories 的工具体在服务端，不应走本地执行。" },
     ),
 )
 
@@ -156,15 +90,12 @@ private fun cartSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
             required = listOf("product_code"),
         ),
         kind = AiToolName.Kind.MUTATION,
+        remote = true,
         intentSummary = { args ->
             "加入购物车：商品 ${args.string("product_code") ?: ""} × ${args.int("quantity") ?: 1}"
         },
-        run = { args, _ ->
-            val code = args.string("product_code") ?: ""
-            val qty = args.int("quantity") ?: 1
-            apiCall { graph.cartApi.addItem(AddCartItemRequest(productCode = code, quantity = qty)) }
-            "已将商品 $code × $qty 加入购物车"
-        },
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：add_to_cart 的工具体在服务端，不应走本地执行。" },
     ),
 
     AgentToolSpec(
@@ -175,18 +106,9 @@ private fun cartSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
                 "禁止复用历史结果**（用户可能在中间加/删了商品）。",
         ),
         kind = AiToolName.Kind.READ_ONLY,
-        run = { _, _ ->
-            val cart = apiCall { graph.cartApi.get() }
-            if (cart.items.isEmpty()) {
-                "购物车是空的"
-            } else {
-                val lines = cart.items.joinToString("\n") {
-                    "${it.name} × ${it.quantity}  ¥${agentMoney(it.currentPrice)}"
-                }
-                // itemsTotal 是服务端算好的字符串，直接显示 —— 端上绝不本地加总
-                "购物车（共 ${cart.items.size} 种商品）：\n$lines\n合计：¥${cart.itemsTotal}"
-            }
-        },
+        remote = true,
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：get_cart 的工具体在服务端，不应走本地执行。" },
     ),
 )
 
@@ -206,74 +128,13 @@ private fun orderSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
             params = listOf("note" to strParam("配送备注（可选）")),
         ),
         kind = AiToolName.Kind.MUTATION,
-        // 执行期解析：地址取地址簿、费用取服务端报价（与结算页同一 quote 端点，
-        // 含距离代购费与起送校验），确认弹窗展示并执行的都是这份快照。
-        // 模型全程接触不到地址明细 —— 既堵住「让用户口述地址 → areaCode 丢失 →
-        // 距离费静默为 0」的计费旁路，地址簿 PII 也不进模型上下文。
-        prepare = { args, _ ->
-            val addresses = apiCall { graph.addressApi.list() }
-            if (addresses.isEmpty()) {
-                AgentPreparedMutation.Abort(
-                    "用户的地址簿还没有收货地址，无法下单。请引导用户到" +
-                        "「我的 → 地址管理」添加收货地址后再试；不要让用户在对话里口述地址。",
-                )
-            } else {
-                val chosen = addresses.firstOrNull { it.isDefault } ?: addresses.first()
-                val quote = apiCall { graph.orderApi.quote(QuoteRequest(areaCode = chosen.areaCode)) }
-                val short = quote.groups.firstOrNull { !it.meetsMinOrder }
-                if (short != null) {
-                    AgentPreparedMutation.Abort(
-                        "「${short.merchantName}」商品小计 ¥${agentMoney(short.itemsTotal)} " +
-                            "未达起送金额 ¥${agentMoney(short.minOrderAmount)}，无法下单。" +
-                            "可建议用户补足该店商品，或从购物车移除该店商品后再下单。",
-                    )
-                } else {
-                    val delivery = DeliveryAddress(
-                        name = chosen.name,
-                        phone = chosen.phone,
-                        address = chosen.address,
-                        note = args.string("note"),
-                        areaCode = chosen.areaCode,
-                    )
-                    val details = linkedMapOf(
-                        "收货" to "${chosen.name} ${chosen.phone}",
-                        "地址" to chosen.address,
-                        "合计" to "¥${agentMoney(quote.grandTotal)}",
-                    )
-                    quote.groups.forEach { g ->
-                        val key = if (quote.groups.size == 1) "费用" else g.merchantName
-                        details[key] = "商品 ¥${agentMoney(g.itemsTotal)} + 平台费 ¥${agentMoney(g.platformFee)}" +
-                            " + 代购费 ¥${agentMoney(g.agentFee)}"
-                    }
-                    val summary = if (quote.groups.size > 1) {
-                        "用购物车内容下单（${quote.groups.size} 个商家，分别成单）"
-                    } else {
-                        "用购物车内容下单"
-                    }
-                    AgentPreparedMutation.Ready(
-                        intent = AgentMutationIntent(
-                            id = UUID.randomUUID().toString(),
-                            toolName = AiToolName.PLACE_ORDER.wire,
-                            summary = summary,
-                            details = details,
-                        ),
-                    ) {
-                        val batch = apiCall { graph.orderApi.place(PlaceOrderRequest(deliveryAddress = delivery)) }
-                        val dest = "收货地址用的是用户确认过的地址簿地址（${chosen.name}，${chosen.address}）"
-                        val only = batch.orders.firstOrNull()
-                        if (batch.orderCount == 1 && only != null) {
-                            "下单成功！订单号：${only.orderNumber}，" +
-                                "总金额：¥${agentMoney(only.totalAmount)}，等待代购人接单。$dest。"
-                        } else {
-                            "下单成功！已按商家拆为 ${batch.orderCount} 笔订单，" +
-                                "合计 ¥${batch.grandTotal}，等待代购人接单。$dest。"
-                        }
-                    }
-                }
-            }
-        },
-        // 不可达：place_order 恒经 prepare 的确认流程执行（管道优先走 prepare）
-        run = { _, _ -> "内部错误：place_order 只能经确认流程执行。" },
+        remote = true,
+        remotePrepare = true,
+        // 执行期解析在服务端（R5）：地址取地址簿、费用取服务端报价（与结算页同一
+        // quote 端点，含距离代购费与起送校验），**快照留在服务端**，确认弹窗展示的
+        // 与实际执行的由票据绑定。模型全程接触不到地址明细 —— 既堵住「让用户口述
+        // 地址 → areaCode 丢失 → 距离费静默为 0」的计费旁路，地址簿 PII 也不进模型上下文。
+        run = { _, _ -> "内部错误：place_order 必须经确认流程执行。" },
     ),
 
     AgentToolSpec(
@@ -284,20 +145,9 @@ private fun orderSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
                 "**每次都重新调用获取最新状态，禁止复用历史结果。**",
         ),
         kind = AiToolName.Kind.READ_ONLY,
-        run = { _, _ ->
-            val orders = apiCall { graph.orderApi.list() }
-            if (orders.isEmpty()) {
-                "你还没有订单。"
-            } else {
-                val lines = orders.take(20).joinToString("\n") { o ->
-                    val count = o.itemCount?.let { "${it}件" } ?: ""
-                    "#${o.orderNumber}（id:${o.id}）｜${orderStatusLabel(o.status)}" +
-                        "｜¥${agentMoney(o.totalAmount)}｜$count"
-                }
-                "你的订单（共 ${orders.size} 笔）：\n$lines" +
-                    "\n（需要某单详情时用 get_order_detail，order_id 传上面的 id）"
-            }
-        },
+        remote = true,
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：list_my_orders 的工具体在服务端，不应走本地执行。" },
     ),
 
     AgentToolSpec(
@@ -310,26 +160,8 @@ private fun orderSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
             required = listOf("order_id"),
         ),
         kind = AiToolName.Kind.READ_ONLY,
-        run = { args, _ ->
-            val orderId = args.int("order_id")
-            if (orderId == null) {
-                "请提供 order_id（订单的数字 id）。可先用 list_my_orders 查到 id。"
-            } else {
-                val o = apiCall { graph.orderApi.detail(orderId) }
-                var out = """
-                订单 #${o.orderNumber}
-                状态：${orderStatusLabel(o.status)}
-                合计：¥${agentMoney(o.totalAmount)}（商品 ¥${agentMoney(o.itemsTotal)} + 平台费 ¥${agentMoney(o.platformFee)} + 代购费 ¥${agentMoney(o.agentFee)}）
-                商品：${o.items.joinToString("、") { "${it.productSnapshot.name} × ${it.quantity}" }}
-                收货：${o.deliveryAddress.name} ${o.deliveryAddress.address}
-                下单时间：${o.createdAt}
-                """.trimIndent()
-                val actions = o.availableActions
-                if (!actions.isNullOrEmpty()) {
-                    out += "\n你现在可以：${actions.joinToString("、") { it.label }}"
-                }
-                out
-            }
-        },
+        remote = true,
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：get_order_detail 的工具体在服务端，不应走本地执行。" },
     ),
 )

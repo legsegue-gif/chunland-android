@@ -309,7 +309,14 @@ object AiSchema {
         TEXT("text"),
         TOOL_USE("tool_use"),
         TOOL_RESULT("tool_result"),
-        IMAGE("image");
+        IMAGE("image"),
+
+        /**
+         * 结构化卡片（R3）。JSON 存在 `text` 列 —— **不新增列、不升 schema 版本**：
+         * `kind` 本来就是 TEXT，新增取值不改 DDL。检索索引只收 TEXT，
+         * 所以卡片 JSON 不会污染搜索。
+         */
+        CARDS("cards");
 
         companion object {
             fun from(raw: String): PartKind? = entries.firstOrNull { it.wire == raw }

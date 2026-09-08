@@ -9,6 +9,7 @@ import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import com.chunland.app.core.AppGraph
+import com.chunland.app.core.logging.AiDebugFileLog
 
 class ChunlandApp : Application(), SingletonImageLoader.Factory {
 
@@ -18,6 +19,8 @@ class ChunlandApp : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         graph = AppGraph(this)
+        // AI 对话调试日志：debug 源集才有实现，release 是空壳（见 AiDebugFileLog 注释）
+        AiDebugFileLog.install(this)
 
     }
 

@@ -260,7 +260,7 @@ class AiLoopTest {
     // MARK: - 管道与检测器的接线
     //
     // 检测器单测过不代表接线对：真正的 bug 出在**管道怎么记账**。
-    // 模拟器实测发现「不可用工具连击 3 次熔断」从未生效 —— 被阻断的那次
+    // 曾出过一个 bug：「不可用工具连击 3 次熔断」从未生效 —— 被阻断的那次
     // 记成了普通调用，把连击链自己打断，只能等 15 次的全局熔断兜底。
 
     private class FakeExecutor(private val availableTools: Set<String>) : AgentToolExecuting {
