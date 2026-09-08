@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -46,6 +47,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chunland.app.core.AppGraph
 import com.chunland.app.core.network.userMessage
+import com.chunland.app.feature.profile.ServerConfigSheet
+import com.chunland.app.ui.OTP_LENGTH
+import com.chunland.app.ui.sanitizeOtp
+import com.chunland.app.ui.smsOtpAutofill
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -58,6 +63,7 @@ fun LoginScreen(graph: AppGraph, onDismiss: () -> Unit) {
     val vm: LoginViewModel = viewModel { LoginViewModel(graph.authManager) }
     val snackbar = remember { SnackbarHostState() }
     var showReset by remember { mutableStateOf(false) }
+    var showServerConfig by remember { mutableStateOf(false) }
 
     BackHandler(onBack = onDismiss)
 
@@ -71,9 +77,22 @@ fun LoginScreen(graph: AppGraph, onDismiss: () -> Unit) {
     Scaffold(
         topBar = {
             Row(
-                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(4.dp),
             ) {
+                // 服务器配置入口（角标）—— 仅 Debug；Release 锁定 prod、不暴露切换入口。
+                // 位置对齐 iOS AuthView：左上角，与右上角的关闭按钮分列两端。
+                // 登录前就要能改 —— 否则只能先拿旧地址登一次再去「我的」里切。
+                if (graph.serverConfig.canOverride) {
+                    IconButton(onClick = { showServerConfig = true }) {
+                        Icon(
+                            Icons.Filled.Dns,
+                            contentDescription = "服务器地址",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Spacer(Modifier.weight(1f))
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Filled.Close, contentDescription = "关闭")
                 }
@@ -138,11 +157,13 @@ fun LoginScreen(graph: AppGraph, onDismiss: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = vm.code,
-                        onValueChange = { vm.code = it },
+                        // 只留数字、最多 6 位（对齐 iOS AuthView 的 onChange 过滤）——
+                        // 本页原先没做，粘贴带空格的验证码会直接提交失败
+                        onValueChange = { vm.code = sanitizeOtp(it) },
                         label = { Text("验证码") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).smsOtpAutofill(),
                     )
                     Spacer(Modifier.width(12.dp))
                     OutlinedButton(
@@ -185,6 +206,9 @@ fun LoginScreen(graph: AppGraph, onDismiss: () -> Unit) {
     if (showReset) {
         ResetPasswordSheet(graph = graph, onDismiss = { showReset = false })
     }
+    if (showServerConfig) {
+        ServerConfigSheet(graph = graph, onDismiss = { showServerConfig = false })
+    }
 }
 
 /** 忘记密码（对齐 iOS 重置密码 sheet）：OTP purpose=reset 验证 + 设新密码，成功即登录。 */
@@ -209,7 +233,7 @@ private fun ResetPasswordSheet(graph: AppGraph, onDismiss: () -> Unit) {
     }
 
     val mismatch = confirm.isNotEmpty() && newPassword != confirm
-    val canSubmit = target.trim().isNotEmpty() && code.length == 6 &&
+    val canSubmit = target.trim().isNotEmpty() && code.length == OTP_LENGTH &&
         newPassword.length >= 6 && newPassword == confirm
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -244,11 +268,11 @@ private fun ResetPasswordSheet(graph: AppGraph, onDismiss: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = code,
-                    onValueChange = { v -> code = v.filter { it.isDigit() }.take(6) },
+                    onValueChange = { code = sanitizeOtp(it) },
                     label = { Text("验证码") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).smsOtpAutofill(),
                 )
                 Spacer(Modifier.width(12.dp))
                 TextButton(

@@ -1,9 +1,15 @@
 package com.chunland.app.core
 
+import com.chunland.app.core.ai.tools.AiWireToolCatalog
+import com.chunland.app.core.security.SharedPrefsStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import android.content.Context
 import com.chunland.app.BuildConfig
 import com.chunland.app.core.ai.AiRuntime
 import com.chunland.app.core.ai.tools.AgentToolRegistry
+import com.chunland.app.core.network.ServerConfig
 import com.chunland.app.core.network.apiCall
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -17,10 +23,20 @@ import kotlinx.coroutines.launch
  */
 class AppGraph(context: Context) {
 
+    /**
+     * API 基址真相源。默认值与「是否允许覆盖」都来自本 module 的 BuildConfig —— :core 读不到它。
+     * Release 下 canOverride=false，[ServerConfig.baseUrl] 恒返回编译默认（对齐 iOS AppSettings）。
+     */
+    val serverConfig = ServerConfig(
+        context = context,
+        defaultBaseUrl = BuildConfig.API_BASE_URL,
+        canOverride = BuildConfig.DEBUG,
+    )
+
     /** 共享基础层（:core）。 */
     val core = CoreGraph(
         context = context,
-        baseUrl = BuildConfig.API_BASE_URL,
+        serverConfig = serverConfig,
         debugLogging = BuildConfig.DEBUG,
     )
 
@@ -44,6 +60,7 @@ class AppGraph(context: Context) {
     val reportApi get() = core.reportApi
     val blockApi get() = core.blockApi
     val configApi get() = core.configApi
+    val aiToolApi get() = core.aiToolApi
 
     // ── app 专属 ──
     val followStore: FollowStore by lazy { FollowStore(feedApi) }
@@ -51,6 +68,21 @@ class AppGraph(context: Context) {
     val feedEventTracker: FeedEventTracker by lazy { FeedEventTracker(feedApi, appScope) }
 
     val storeAnchor: StoreAnchorStore by lazy { StoreAnchorStore(appContext) }
+
+    /**
+     * 线上下发的只读工具目录（schema 不在端上源码里）。
+     *
+     * 单例：按身份缓存，会话共享 —— 每个会话各拉一次是白费往返。
+     */
+    val aiWireToolCatalog: AiWireToolCatalog by lazy {
+        AiWireToolCatalog(
+            store = SharedPrefsStore(
+                appContext.getSharedPreferences("chunland_ai_wire_tools", Context.MODE_PRIVATE)
+            ),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            fetcher = { identity -> apiCall { aiToolApi.schema(identity) } },
+        )
+    }
 
     /** 会话属主：登录用 userId，游客独立 "guest" 桶（读路径按属主过滤，绝不外泄他人历史） */
     val aiOwner: () -> String = { authManager.state.value.userId ?: "guest" }
@@ -69,6 +101,9 @@ class AppGraph(context: Context) {
                     graph = this,
                     scope = context.scope,
                     suggested = context.tools,
+                    // 页面上下文里的 id 天然合法 —— 不预置，商品详情页 ✨ 一进来
+                    // 说「加购」就会被 provenance 守卫自己挡住
+                    seedProvenance = context.seedProvenance,
                     // 用闭包而不是快照：身份可能在会话存续期间被切换，
                     // 工具可用集必须跟着变
                     activeIdentity = { authManager.state.value.activeIdentity },
@@ -85,6 +120,18 @@ class AppGraph(context: Context) {
 
     // ── 可选集成装配（各自随模块存废）──
 
+
+    /**
+     * 切换服务器地址后丢掉内存缓存，让各页按新地址重拉（Debug 开发者功能）。
+     *
+     * 刻意**不**登出：换到共用同一套签发密钥/数据库的地址时，现有 token 本就继续有效，
+     * 强制重登纯属自找麻烦。而换到密钥不同的地址时，access 验不过 → 401 → refresh
+     * 同样验不过 → [com.chunland.app.core.auth.AuthManager.refreshedAccessToken] 的 catch
+     * 里已经强制登出，链路本来就闭环。这里再补一刀只会多一次无谓的重登。
+     */
+    fun resetForServerChange() {
+        followStore.reset()
+    }
 
     init {
         // 登出（含 401 强制登出）→ 清关注集与 AI 会话（含 scoped），防止跨账号残留。

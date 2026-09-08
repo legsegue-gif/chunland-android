@@ -96,6 +96,13 @@ fun AgentChatPanel(
      * base64 塞进消息里跟着会话一起加载，一张 1MB 照片编码后约 1.37MB。
      */
     media: MediaStore,
+    /**
+     * 点结构化卡片进商品详情（R3）。
+     *
+     * 默认 no-op —— sheet 形态的入口（进店 ✨、商品页 ✨）本来就叠在某个页面上，
+     * 再往里推一层导航会把用户带离原来的上下文。
+     */
+    onOpenProduct: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -184,7 +191,7 @@ fun AgentChatPanel(
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     items(session.messages, key = { it.id }) { message ->
-                        MessageRow(message, media)
+                        MessageRow(message, media, onOpenProduct)
                     }
                 }
             }
@@ -300,10 +307,14 @@ private fun PendingMediaStrip(
 }
 
 @Composable
-private fun MessageRow(message: ChatDisplayMessage, media: MediaStore) {
+private fun MessageRow(
+    message: ChatDisplayMessage,
+    media: MediaStore,
+    onOpenProduct: (String) -> Unit,
+) {
     when (message.role) {
         ChatDisplayMessage.Role.USER -> UserBubble(message, media)
-        ChatDisplayMessage.Role.ASSISTANT -> AssistantBody(message)
+        ChatDisplayMessage.Role.ASSISTANT -> AssistantBody(message, onOpenProduct)
         ChatDisplayMessage.Role.SYSTEM -> SystemNote(message)
     }
 }
@@ -342,7 +353,7 @@ private fun UserBubble(message: ChatDisplayMessage, media: MediaStore) {
 }
 
 @Composable
-private fun AssistantBody(message: ChatDisplayMessage) {
+private fun AssistantBody(message: ChatDisplayMessage, onOpenProduct: (String) -> Unit) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         message.blocks.forEach { block ->
             when (block) {
@@ -354,6 +365,12 @@ private fun AssistantBody(message: ChatDisplayMessage) {
                     }
                 is ChatBlock.Tool -> AgentToolBlock(block.block)
             }
+        }
+
+        // 结构化卡片（R3）：价格库存来自服务端那一次查询的真实行，不是模型转述的。
+        // 放在文本之后 —— 模型先说结论，卡片给权威数字。
+        if (message.cards.isNotEmpty()) {
+            AgentCardStrip(message.cards, onOpenProduct)
         }
 
         if (message.isStreaming && message.blocks.isEmpty()) {

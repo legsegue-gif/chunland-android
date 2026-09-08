@@ -1,6 +1,5 @@
 package com.chunland.app.core.ai.tools
 
-import com.chunland.app.core.ai.AiToolScope
 import com.chunland.app.core.ai.domain.AgentParamType
 import com.chunland.app.core.ai.domain.AgentToolDefinition
 import com.chunland.app.core.ai.domain.AgentToolInput
@@ -21,6 +20,21 @@ class AgentToolSpec(
     val name: AiToolName,
     definition: AgentToolDefinition,
     val kind: AiToolName.Kind,
+    /**
+     * 工具体是否已搬到服务端（R5）。
+     *
+     * true = [run] 不再被调用，改打 `POST /ai/tools/call`；服务端返回的文本
+     * **已消毒且已围栏**，端上原样透传。迁移期逐个翻，翻完这个标记就可以删掉。
+     */
+    val remote: Boolean = false,
+    /**
+     * 变更工具的执行期解析是否也在服务端（R5）。
+     *
+     * true = 走 `POST /ai/tools/prepare` 拿票据与意图，用户确认后
+     * `POST /ai/tools/commit` 执行那份服务端快照。
+     * **「确认里看到的 = 实际执行的」由服务端持有快照来保证。**
+     */
+    val remotePrepare: Boolean = false,
     /** 变更类专用：据参数生成给用户看的确认摘要。只读工具为 null */
     val intentSummary: ((AgentToolInput) -> String)? = null,
     /**
@@ -30,12 +44,31 @@ class AgentToolSpec(
      * [intentSummary] / [run] 不再参与。这是「确认里看到的 = 实际执行的」
      * 由构造保证，而不是靠模型转述参数。
      */
-    val prepare: (suspend (AgentToolInput, AiToolScope) -> AgentPreparedMutation)? = null,
-    /** 执行体。第二参数是当前会话的结构化作用域 —— 进店等场景据此硬限定查询范围 */
-    val run: suspend (AgentToolInput, AiToolScope) -> String,
+    val prepare: (suspend (AgentToolInput, AiToolContext) -> AgentPreparedMutation)? = null,
+    /**
+     * 执行体。第二参数是当前会话给工具的东西：结构化作用域（进店硬限定查询范围）
+     * 与 provenance 记录者（只读工具登记见过的 id，变更工具受其约束）。
+     */
+    val run: suspend (AgentToolInput, AiToolContext) -> String,
 ) {
     /** 每个工具都自动带上 tool_title —— 不必在每处手写一遍 */
     val definition: AgentToolDefinition = definition.withToolTitle()
+}
+
+// MARK: - 列表类工具的行数上限
+//
+// 与 `AiFence.MAX_RESULT_CHARS` 是两道，不重复：字符上限兜总量（防一条结果吃掉整个
+// 窗口），行数上限保证**截断落在语义边界上** —— 字符截断会把最后一行切成半截，
+// 模型可能把半截商品名当成完整的。
+//
+// 取 50 而不是同文件其他工具的 20：店铺全量商品与合并采购清单本就是长列表，
+// 20 行会让模型看不全而反复追问。
+
+object AgentToolLimits {
+    /** 长列表类工具单次最多列多少行。 */
+    const val MAX_ROWS = 50
+    /** 被截断时附在末尾的说明（要告诉模型「还有」，否则它会当成全部）。 */
+    const val ROWS_TRUNCATED = "（列表过长，只列出前 %d 条，共 %d 条）"
 }
 
 // ---- 构造便利：把「参数表 + 必填列表」写紧凑，减少每个工具定义的样板 ----

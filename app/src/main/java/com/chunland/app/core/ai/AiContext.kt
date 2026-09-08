@@ -1,6 +1,7 @@
 package com.chunland.app.core.ai
 
 import com.chunland.app.core.ai.prompt.AiPrompts
+import com.chunland.app.core.ai.tools.AiProvenanceKind
 import com.chunland.app.core.ai.tools.AiToolName
 
 /**
@@ -43,6 +44,11 @@ data class AiContext(
     val tools: Set<AiToolName>? = null,
     val scope: AiToolScope = AiToolScope.GLOBAL,
     val contextKey: String? = null,
+    /**
+     * 页面上下文里天然合法的 id。用户就站在这个商品/订单页上，模型不必先查一遍
+     * 才能对它下手 —— 不预置的话，商品详情页 ✨ 说「加购」会被 provenance 守卫自己挡住。
+     */
+    val seedProvenance: Map<AiProvenanceKind, List<String>> = emptyMap(),
 ) {
     companion object {
         /**
@@ -98,6 +104,8 @@ data class AiContext(
                 AiToolName.PLACE_ORDER,
             ),
             contextKey = "product:$code",
+            // 用户就在这个商品页上 —— 直接说「加购」不该被 provenance 挡
+            seedProvenance = mapOf(AiProvenanceKind.PRODUCT to listOf(code)),
         )
 
         /** 订单详情页 ✨（对齐 iOS AIContext.order）：订单只读工具（查状态/进度）。 */
@@ -110,6 +118,7 @@ data class AiContext(
                 welcome = "关于这笔订单，有什么可以帮你？比如它到哪了、怎么退、现在还能做什么。",
                 tools = setOf(AiToolName.GET_ORDER_DETAIL, AiToolName.LIST_MY_ORDERS),
                 contextKey = "order:$id",
+                seedProvenance = mapOf(AiProvenanceKind.ORDER to listOf(id.toString())),
             )
         }
 

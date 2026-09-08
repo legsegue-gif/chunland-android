@@ -6,6 +6,7 @@ import com.chunland.app.core.ai.domain.AgentToolDefinition
 import com.chunland.app.core.ai.domain.AgentToolInput
 import com.chunland.app.core.ai.domain.AgentToolPreflight
 import com.chunland.app.core.ai.domain.AgentTurnResult
+import com.chunland.app.core.ai.prompt.AiFence
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -19,7 +20,7 @@ import kotlinx.coroutines.sync.withPermit
  *
  * 单个工具调用的固定处理顺序：
  * ```
- * 取消预检 → 循环检测 → 参数修复 → preflight（含身份守卫）→ 执行 → 记录
+ * 取消预检 → 循环检测 → 参数修复 → preflight（身份守卫 + 必填校验 + provenance）→ 执行 → 记录
  * ```
  *
  * **任何一条路径都不能跳过最后的记录步骤** —— 漏记会让循环检测器看不到打转，
@@ -77,6 +78,9 @@ class AgentToolPipeline(
             // 被数两遍，「连续 N 次」的阈值语义就变成了 N/2 轮。
             if (!executor.isAvailable(entry.name)) return@forEachIndexed
             val repaired = repairInput(entry, tools)
+            // provenance 不过的同样不必解析，且同样**只判定不记账**。
+            // 不跳过的话用户会先看到一个确认弹窗、点了确认才被告知「这个 id 没见过」。
+            if (executor.provenanceRejection(entry.name, repaired) != null) return@forEachIndexed
             runCatching { executor.prepare(entry.name, repaired) }
                 .onSuccess { result ->
                     prepared[index] = result
@@ -212,6 +216,14 @@ class AgentToolPipeline(
             return finish(entry, title, rejection.modelMessage, isError = true, cancelled = false)
         }
 
+        // provenance 守卫：本会话没见过的 id 一律拒绝。
+        // 放在 preflight 之后 —— 必填都没齐时先报缺参，两道同时报会让模型收到两种说法。
+        executor.provenanceRejection(entry.name, repaired)?.let { rejection ->
+            detector.record(entry.name, repaired, null)
+            Log.w(TAG, "provenance 拒绝 tool=${entry.name}")
+            return finish(entry, title, rejection, isError = true, cancelled = false)
+        }
+
         return try {
             val text = when (prepared) {
                 is AgentPreparedMutation.Abort -> {
@@ -231,14 +243,21 @@ class AgentToolPipeline(
             }
 
             detector.record(entry.name, repaired, text)
-            val body = warning?.let { "$text\n\n<系统提醒>$it</系统提醒>" } ?: text
-            finish(entry, title, body, isError = false, cancelled = false)
+            // 服务端工具体的返回已消毒已围栏 —— 端上原样透传，绝不再过一遍
+            val processing = if (executor.isRemote(entry.name)) {
+                ResultProcessing.ALREADY_PROCESSED
+            } else {
+                ResultProcessing.FENCE_DATA
+            }
+            finish(entry, title, text, isError = false, cancelled = false,
+                processing = processing, warning = warning)
 
         } catch (e: Throwable) {
             val message = "执行「${entry.name}」时出错：${e.message ?: e.javaClass.simpleName}"
             detector.record(entry.name, repaired, message)
             Log.e(TAG, "工具执行失败 tool=${entry.name}", e)
-            finish(entry, title, message, isError = true, cancelled = false)
+            finish(entry, title, message, isError = true, cancelled = false,
+                processing = ResultProcessing.FENCE_DATA)
         }
     }
 
@@ -256,18 +275,57 @@ class AgentToolPipeline(
         return outcome.input
     }
 
+    /**
+     * 工具结果文本要怎么处理。
+     *
+     * 三态而不是一个 Boolean：R5 之后结果有三种来源，处理方式互不相同，
+     * 用布尔表达会出现「消毒了但没围栏」和「服务端已围栏又被端上消毒」两种错配。
+     */
+    private enum class ResultProcessing {
+        /** 端上工具产出的数据：消毒 + 包数据围栏 */
+        FENCE_DATA,
+        /**
+         * 管道自己的控制文案（阻断说明、前置条件引导）：只消毒不围栏 ——
+         * 它们本身就是要模型照做的指令，包进「这是数据」的围栏等于自我否定。
+         */
+        CONTROL_TEXT,
+        /**
+         * 服务端工具体已消毒且已围栏：**原样透传**。
+         * 再过一次消毒会把服务端加的围栏标记一并中和掉，围栏就白做了。
+         */
+        ALREADY_PROCESSED,
+    }
+
+    /**
+     * 所有工具结果的**唯一出口** —— 消毒、围栏、追加系统提醒三步的顺序在这里由构造保证。
+     *
+     * 顺序不能动：先消毒（剥掉正文里伪造的标记），再围栏，最后才追加我们自己的
+     * 系统提醒。反过来做等于把自己的提醒也消毒掉。
+     *
+     * @param warning 循环检测的非阻断警告，附在结果之后（围栏之外）。
+     */
     private fun finish(
         entry: AgentTurnResult.ToolEntry,
         title: String?,
         text: String,
         isError: Boolean,
         cancelled: Boolean,
-    ) = Outcome(
-        toolId = entry.id,
-        toolName = entry.name,
-        part = AgentContentPart.ToolResult(entry.id, entry.name, text, isError),
-        cancelled = cancelled,
-        title = title,
-        isError = isError,
-    )
+        processing: ResultProcessing = ResultProcessing.CONTROL_TEXT,
+        warning: String? = null,
+    ): Outcome {
+        var body = when (processing) {
+            ResultProcessing.FENCE_DATA -> AiFence.fence(AiFence.sanitize(text))
+            ResultProcessing.CONTROL_TEXT -> AiFence.sanitize(text)
+            ResultProcessing.ALREADY_PROCESSED -> text
+        }
+        if (warning != null) body += "\n\n" + AiFence.systemNote(warning)
+        return Outcome(
+            toolId = entry.id,
+            toolName = entry.name,
+            part = AgentContentPart.ToolResult(entry.id, entry.name, body, isError),
+            cancelled = cancelled,
+            title = title,
+            isError = isError,
+        )
+    }
 }

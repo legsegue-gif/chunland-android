@@ -1,5 +1,6 @@
 package com.chunland.app.core.ai.domain
 
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -44,10 +45,36 @@ data class MediaRef(
  * [ToolResult] 与 [ToolUse] 通过 `id` 配对 —— 这是整个 agent 循环的**第一约束**：
  * 调用与结果必须严格配对且同序，历史裁剪 / 压缩 / 卸载 / 重试 / 取消全都不能破坏它。
  */
+/**
+ * 一张结构化卡片（R3，对齐 iOS AgentCard）。
+ *
+ * 做成带 kind 的结构而不是直接 ProductCard，是为了将来加订单卡/店铺卡时
+ * **老客户端能静默跳过不认识的 kind**，而不是整条消息解码失败。
+ */
+@Serializable
+data class AgentCard(
+    val kind: String,
+    val code: String? = null,
+    val name: String? = null,
+    val price: Double? = null,
+    val originalPrice: Double? = null,
+    val inStock: Boolean? = null,
+    val thumbnail: String? = null,
+)
+
 sealed interface AgentContentPart {
 
     /** 普通文本（用户输入或模型输出） */
     data class Text(val text: String) : AgentContentPart
+
+    /**
+     * 结构化卡片（R3）—— **给用户看的那一份，不喂给模型**。
+     *
+     * 模型只报 id，价格库存由服务端从真实行填充。模型转述数字迟早会转错一次，
+     * 卡片上的每个字段都来自那一次查询，错不了。
+     * 与同一次工具调用的 ToolResult 同源，两者不会各说各话。
+     */
+    data class Cards(val cards: List<AgentCard>) : AgentContentPart
 
     /** 模型发起的工具调用 */
     data class ToolUse(

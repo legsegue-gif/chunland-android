@@ -1,5 +1,7 @@
 package com.chunland.app.core.ai.storage
 
+import com.chunland.app.core.ai.domain.AgentCard
+import com.chunland.app.core.network.ChunlandJson
 import com.chunland.app.core.ai.domain.AgentContentPart
 import com.chunland.app.core.ai.domain.AgentMessage
 import com.chunland.app.core.ai.domain.AgentToolInput
@@ -259,6 +261,19 @@ class MessageRepo(
                 )
             )
 
+            is AgentContentPart.Cards -> tx.execute(
+                // JSON 进 text 列。**不进检索索引** —— 那是给用户看的渲染数据，
+                // 搜到一段 JSON 对用户没有意义。
+                sql,
+                listOf(
+                    SqlValue.text(partId), SqlValue.text(messageId), SqlValue.int(idx),
+                    SqlValue.text(AiSchema.PartKind.CARDS.wire),
+                    SqlValue.text(ChunlandJson.encodeToString(part.cards)),
+                    SqlValue.Null, SqlValue.Null, SqlValue.Null, SqlValue.Null,
+                    SqlValue.Null, SqlValue.Null,
+                )
+            )
+
             is AgentContentPart.Image -> tx.execute(
                 sql,
                 listOf(
@@ -294,6 +309,15 @@ class MessageRepo(
                     media = row.string("media_id")?.let { media[it] },
                     offloadRef = row.string("offload_ref"),
                 )
+            }
+
+            AiSchema.PartKind.CARDS -> {
+                // 解不出来就当没有卡片 —— 老库里的、或将来格式变了的，
+                // 都不该让整条消息读不出来（历史比一次渲染重要）
+                val json = row.string("text") ?: return null
+                runCatching {
+                    AgentContentPart.Cards(ChunlandJson.decodeFromString<List<AgentCard>>(json))
+                }.getOrNull()
             }
 
             AiSchema.PartKind.IMAGE -> {

@@ -10,6 +10,7 @@ import com.chunland.app.core.ai.AiContext
 import com.chunland.app.core.ai.domain.AgentContentPart
 import com.chunland.app.core.ai.domain.AgentMessage
 import com.chunland.app.core.ai.domain.AgentToolDefinition
+import com.chunland.app.core.ai.prompt.AiFence
 import com.chunland.app.core.ai.domain.MediaRef
 import com.chunland.app.core.ai.loop.AgentLoop
 import com.chunland.app.core.ai.loop.AgentLoopEnd
@@ -51,6 +52,76 @@ class AiChatSession(
 
         /** 同 contextKey 的会话多久内可续聊 —— 「问一半收起再打开」上下文不丢 */
         const val RESUME_WINDOW_MS = 24 * 60 * 60 * 1000L
+
+        // MARK: - 展示模型转换
+        //
+        // 放 companion 而不是实例方法：三个都不碰实例状态，放这里单测才够得着
+        // （iOS 侧本来就是 static，两端形状也因此一致）。
+
+        /**
+         * 历史消息 → 展示模型。
+         *
+         * 工具调用与结果在 domain 里是两条消息，在 UI 上要合成一个块 ——
+         * 这里只建块（assistant 的 ToolUse），补状态由 [mergeToolResults] 单独一趟做。
+         */
+        internal fun displayFrom(message: AgentMessage): ChatDisplayMessage? {
+            val role = if (message.role == AgentMessage.Role.USER) {
+                ChatDisplayMessage.Role.USER
+            } else {
+                ChatDisplayMessage.Role.ASSISTANT
+            }
+            val display = ChatDisplayMessage(role)
+
+            message.parts.forEach { part ->
+                when (part) {
+                    is AgentContentPart.Text -> {
+                        // 空响应提醒是内部注入的，不给用户看。
+                        // 判据必须是 AiFence 的标记常量 —— 正文里的标记副本已在消毒时中和，
+                        // 所以这里前缀命中即可断定是我们自己注入的，外部文本伪造不出来。
+                        if (!part.text.startsWith(AiFence.SYSTEM_OPEN)) display.appendText(part.text)
+                    }
+                    is AgentContentPart.ToolUse ->
+                        display.addTool(part.id, part.name, part.input.string(AgentToolDefinition.TOOL_TITLE_KEY))
+                    // 结果不在这条消息里配对 —— 由 mergeToolResults 跨消息补到对应的块上
+                    is AgentContentPart.ToolResult -> Unit
+                    is AgentContentPart.Cards -> display.cards += part.cards
+                    is AgentContentPart.Image -> display.media += part.media
+                }
+            }
+            message.reasoning?.takeIf { it.isNotEmpty() }?.let { display.appendText(it, thinking = true) }
+            return if (display.isEmpty) null else display
+        }
+
+        /**
+         * 把工具结果补回对应的工具块上。**重建历史时必须走这一趟。**
+         *
+         * 为什么非得单独一趟：`ToolUse` 和它的 `ToolResult` **不在同一条消息里**
+         * （结果是紧随其后那条 role=tool 的消息），而 [displayFrom] 一次只看一条消息，
+         * 天然拼不起来。
+         *
+         * 漏了这趟的后果是静默的：`addTool` 建块默认 RUNNING，此后无人补状态 ——
+         * 重开会话后每个历史工具调用都停在「执行中」转圈，且展不开结果。
+         * 编译、单测、parity 全都抓不到，只有真的重开一次会话才看得见。
+         */
+        internal fun mergeToolResults(displays: List<ChatDisplayMessage>, history: List<AgentMessage>) {
+            history.asSequence()
+                .flatMap { it.parts.asSequence() }
+                .filterIsInstance<AgentContentPart.ToolResult>()
+                .forEach { result ->
+                    // finishTool 找不到块就是空操作，所以挨条试是安全的
+                    displays.forEach { it.finishTool(result.id, result.isError, result.text) }
+                }
+        }
+
+        /** 历史 → 展示模型。建块与补结果是两趟，缺一不可（见 [mergeToolResults]）。 */
+        internal fun displaysFrom(history: List<AgentMessage>): List<ChatDisplayMessage> {
+            val displays = history.mapNotNull(::displayFrom)
+            mergeToolResults(displays, history)
+            // 历史里有 ToolUse 却没有对应结果 = 上次被中途杀掉。
+            // 不收这个尾就又是一个永远转不完的圈 —— 与流式收尾同一张安全网。
+            displays.forEach { it.closeDanglingTools() }
+            return displays
+        }
     }
 
     // MARK: - 对外状态
@@ -100,7 +171,7 @@ class AiChatSession(
                     val history = messagesRepo.load(existing.id)
                     loop.setHistory(history)
                     messages.clear()
-                    messages += history.mapNotNull(::displayFrom)
+                    messages += displaysFrom(history)
                     Log.i(TAG, "续聊 key=$key messages=${history.size}")
                     return
                 }
@@ -126,7 +197,7 @@ class AiChatSession(
             sessionId = targetId
             loop.setHistory(history)
             messages.clear()
-            messages += history.mapNotNull(::displayFrom)
+            messages += displaysFrom(history)
             Log.i(TAG, "装载历史会话 messages=${history.size}")
         }.onFailure { Log.e(TAG, "装载历史会话失败", it) }
     }
@@ -236,7 +307,8 @@ class AiChatSession(
             is AgentLoopEvent.TextDelta -> display.appendText(event.text)
             is AgentLoopEvent.ThinkingDelta -> display.appendText(event.text, thinking = true)
             is AgentLoopEvent.ToolStarted -> display.addTool(event.id, event.name, event.title)
-            is AgentLoopEvent.ToolFinished -> display.finishTool(event.id, event.isError, null)
+            is AgentLoopEvent.Cards -> display.cards += event.cards
+            is AgentLoopEvent.ToolFinished -> display.finishTool(event.id, event.isError, event.resultText)
             // 降级必须让用户看见 —— 否则「今天回答风格怎么变了」无从解释
             is AgentLoopEvent.Fallback -> appendSystemNote(event.record.userText)
             AgentLoopEvent.Compacted -> appendSystemNote("较早的对话已折叠以节省上下文。")
@@ -292,38 +364,6 @@ class AiChatSession(
                 if (title.isNotEmpty()) runCatching { sessions.rename(id, title) }
             }
         }.onFailure { Log.e(TAG, "落库失败", it) }
-    }
-
-    // MARK: - 展示模型转换
-
-    /**
-     * 历史消息 → 展示模型。
-     *
-     * 工具调用与结果在 domain 里是两条消息，在 UI 上要合成一个块 ——
-     * 所以先建块（assistant 的 ToolUse），结果由后续补状态。
-     */
-    private fun displayFrom(message: AgentMessage): ChatDisplayMessage? {
-        val role = if (message.role == AgentMessage.Role.USER) {
-            ChatDisplayMessage.Role.USER
-        } else {
-            ChatDisplayMessage.Role.ASSISTANT
-        }
-        val display = ChatDisplayMessage(role)
-
-        message.parts.forEach { part ->
-            when (part) {
-                is AgentContentPart.Text -> {
-                    // 空响应提醒是内部注入的，不给用户看
-                    if (!part.text.startsWith("<系统提醒>")) display.appendText(part.text)
-                }
-                is AgentContentPart.ToolUse ->
-                    display.addTool(part.id, part.name, part.input.string(AgentToolDefinition.TOOL_TITLE_KEY))
-                is AgentContentPart.ToolResult -> Unit
-                is AgentContentPart.Image -> display.media += part.media
-            }
-        }
-        message.reasoning?.takeIf { it.isNotEmpty() }?.let { display.appendText(it, thinking = true) }
-        return if (display.isEmpty) null else display
     }
 
     // MARK: - HITL 确认

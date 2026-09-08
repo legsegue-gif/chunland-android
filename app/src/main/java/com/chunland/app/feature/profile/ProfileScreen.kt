@@ -21,13 +21,17 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.PersonOff
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material.icons.filled.WorkOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -53,15 +57,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import com.chunland.app.BuildConfig
+import android.content.Context
+import android.content.Intent
+import androidx.core.content.FileProvider
 import com.chunland.app.core.AppGraph
+import com.chunland.app.core.logging.AiDebugFileLog
 import com.chunland.app.core.network.serverOrigin
 import com.chunland.app.core.network.userMessage
 import com.chunland.app.data.model.UserProfile
 import com.chunland.app.feature.ai.AiProviderSettingsSheet
 import com.chunland.app.feature.report.ReportSheet
+import java.io.File
 import kotlinx.coroutines.launch
 
 internal fun identityLabel(identity: String): String = when (identity) {
@@ -92,16 +102,19 @@ fun ProfileScreen(
     val authState by graph.authManager.state.collectAsState()
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
     var profile by remember { mutableStateOf<UserProfile?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var showAiConfig by remember { mutableStateOf(false) }
     var showReport by remember { mutableStateOf(false) }
+    var showServerConfig by remember { mutableStateOf(false) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
     var identityMenu by remember { mutableStateOf(false) }
 
-    val docsBase = remember { serverOrigin() }
+    // 刻意不 remember：Debug 下服务器地址可切，缓存住会让合规页链接一直指向旧服务器。
+    // 对齐 iOS —— 那边 docsBase 是计算属性（ProfileView.swift），每次访问现算。
     val openDoc: (String) -> Unit = { path ->
-        runCatching { uriHandler.openUri("$docsBase/$path") }
+        runCatching { uriHandler.openUri("${serverOrigin()}/$path") }
     }
 
     LaunchedEffect(authState.isLoggedIn) {
@@ -273,6 +286,51 @@ fun ProfileScreen(
             ProfileRow(Icons.Filled.Payments, "待结算 / 收益", onClick = onOpenSettlements)
         }
 
+        // 开发者 —— 仅 Debug 可见（Release 下 canOverride=false，且 ServerConfig 也不读 override）。
+        // 位置对齐 iOS ProfileView：代购设置之后、举报之前。
+        if (graph.serverConfig.canOverride) {
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            // 行上显示当前地址：改完要跟着变，故用 state 而非直读（iOS 那边靠 @AppStorage 自动刷新）
+            var serverUrl by remember { mutableStateOf(graph.serverConfig.baseUrl) }
+            LaunchedEffect(showServerConfig) {
+                if (!showServerConfig) serverUrl = graph.serverConfig.baseUrl
+            }
+            ProfileRow(Icons.Filled.Dns, "服务器地址", value = serverUrl) { showServerConfig = true }
+
+            // AI 对话调试日志（完整请求/响应，见 AiDebugFileLog）—— 有内容才显示，
+            // 避免分享一个空文件（对齐 iOS）。release 源集里 hasContent() 恒 false。
+            // 存 state 而非 body 里直读文件：清空后要立刻消失（iOS 同一个坑，见 ProfileView 注释）。
+            var hasAiLog by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) { hasAiLog = AiDebugFileLog.hasContent() }
+            if (hasAiLog) {
+                ProfileRow(Icons.Filled.IosShare, "AI 调试日志") {
+                    AiDebugFileLog.file()?.let { shareLogFile(context, it) }
+                }
+                // 日志只追加不自动清空（见 AiDebugFileLog），手动清空入口
+                ProfileRow(Icons.Filled.Delete, "清空 AI 调试日志") {
+                    AiDebugFileLog.clear()
+                    hasAiLog = false
+                }
+            }
+
+            // 留证：系统 AI 代理层流异常记录（上游多段生成交错等，命中判定才写）。
+            // **按约定路径读文件、不 import 该模块**（对齐 iOS ProfileView 的同一做法）——
+            // 开源构建剥离该模块后文件恒不存在，本入口自动隐藏。
+            // 这一行出现本身就是「复现了」的信号，故用警示色。
+            val anomalyLog = remember { File(context.cacheDir, "shared/ai-stream-anomaly.log") }
+            var hasAnomaly by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) { hasAnomaly = anomalyLog.exists() && anomalyLog.length() > 0 }
+            if (hasAnomaly) {
+                ProfileRow(Icons.Filled.WarningAmber, "AI 流异常记录") {
+                    shareLogFile(context, anomalyLog)
+                }
+                ProfileRow(Icons.Filled.Delete, "清空 AI 流异常记录") {
+                    runCatching { anomalyLog.delete() }
+                    hasAnomaly = false
+                }
+            }
+        }
+
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
         // 举报与黑名单 —— 始终可达的投诉举报通道（平台合规）
@@ -322,6 +380,9 @@ fun ProfileScreen(
     }
     if (showReport) {
         ReportSheet(graph = graph, targetType = "general", onDismiss = { showReport = false })
+    }
+    if (showServerConfig) {
+        ServerConfigSheet(graph = graph, onDismiss = { showServerConfig = false })
     }
     if (showLogoutConfirm) {
         AlertDialog(
@@ -374,5 +435,25 @@ private fun ProfileRow(
             tint = MaterialTheme.colorScheme.outline,
             modifier = Modifier.size(18.dp),
         )
+    }
+}
+
+/**
+ * 把调试日志交给系统分享面板（对齐 iOS 的 UIActivityViewController / ActivityShareView）。
+ *
+ * 走 FileProvider 传文件 URI 而不是 EXTRA_TEXT 直传内容（iOS 传的是内容字符串）：
+ * 日志带完整对话，很快会超过 Binder 事务上限（约 1MB）而抛 TransactionTooLargeException。
+ * authority 与暴露面见 AndroidManifest 的 provider 声明与 res/xml/file_paths.xml
+ * （只暴露 cache/shared/，日志正落在那里）。
+ */
+private fun shareLogFile(context: Context, file: File) {
+    runCatching {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(send, "AI 调试日志"))
     }
 }

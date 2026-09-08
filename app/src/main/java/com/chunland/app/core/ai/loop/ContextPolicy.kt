@@ -135,6 +135,8 @@ object TokenEstimator {
                 is AgentContentPart.ToolResult -> estimate(part.name) + estimate(part.text)
                 // 图片的实际消耗随分辨率变化很大，取一个中等值。
                 // 宁可高估 —— 低估会让上下文悄悄溢出，那是硬失败。
+                // 不发送 → 不占上下文
+                is AgentContentPart.Cards -> 0
                 is AgentContentPart.Image -> 800
             }
         }
