@@ -367,7 +367,7 @@ private fun TabsScreen(
                     onOpenSchemes = onOpenMerchantSchemes,
                 )
                 1 -> MerchantOrdersScreen(graph, padding, snackbar)
-                2 -> AgentAiScreen(graph, padding, snackbar)
+                2 -> AgentAiScreen(graph, padding, snackbar, onOpenProduct = onOpenProduct)
                 else -> profilePane(padding)
             }
             agentLayout -> when (tab) {
@@ -377,7 +377,7 @@ private fun TabsScreen(
                     onOpenPurchaseList = onOpenPurchaseList,
                 )
                 1 -> HallScreen(graph, padding, snackbar, onOpenOrder = onOpenOrder)
-                2 -> AgentAiScreen(graph, padding, snackbar)
+                2 -> AgentAiScreen(graph, padding, snackbar, onOpenProduct = onOpenProduct)
                 else -> profilePane(padding)
             }
             else -> when (tab) {
@@ -389,7 +389,7 @@ private fun TabsScreen(
                     reselectSignal = feedReselect,
                 )
                 1 -> StoreListScreen(graph, padding, onOpenStore)
-                2 -> AgentAiScreen(graph, padding, snackbar)
+                2 -> AgentAiScreen(graph, padding, snackbar, onOpenProduct = onOpenProduct)
                 3 -> if (authState.isLoggedIn) {
                     CartScreen(graph, padding, snackbar, onCheckout = onCheckout)
                 } else {

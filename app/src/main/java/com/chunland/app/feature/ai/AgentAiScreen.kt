@@ -61,6 +61,8 @@ fun AgentAiScreen(
     graph: AppGraph,
     contentPadding: PaddingValues,
     @Suppress("UNUSED_PARAMETER") snackbar: SnackbarHostState,
+    /** 点结构化卡片进商品详情（R3）。AI tab 是全屏页，可以安全地往里推一层。 */
+    onOpenProduct: (String) -> Unit = {},
 ) {
     val runtime = graph.aiRuntime
     val scope = rememberCoroutineScope()
@@ -147,7 +149,7 @@ fun AgentAiScreen(
         Box(Modifier.weight(1f)) {
             val current = session
             when {
-                current != null -> AgentChatPanel(current, runtime.media)
+                current != null -> AgentChatPanel(current, runtime.media, onOpenProduct)
                 runtime.bootstrapError != null -> Unavailable(runtime.bootstrapError!!)
                 else -> CircularProgressIndicator(
                     Modifier.align(Alignment.Center).padding(24.dp),

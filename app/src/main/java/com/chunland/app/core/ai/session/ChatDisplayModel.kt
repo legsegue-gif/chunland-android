@@ -5,7 +5,9 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import com.chunland.app.core.ai.domain.AgentCard
 import com.chunland.app.core.ai.domain.MediaRef
+import com.chunland.app.core.ai.prompt.AiFence
 import com.chunland.app.core.ai.tools.AiToolName
 import java.util.UUID
 
@@ -100,6 +102,14 @@ class ChatDisplayMessage(
     /** 用户附带的图片 */
     val media: SnapshotStateList<MediaRef> = mutableStateListOf<MediaRef>().apply { addAll(media) }
 
+    /**
+     * 结构化卡片（R3）—— 商品等实体的权威呈现。
+     *
+     * **模型只报 id，这里的每个字段都来自服务端那一次查询的真实行。**
+     * 模型转述数字迟早会转错一次，卡片不会。
+     */
+    val cards: SnapshotStateList<AgentCard> = mutableStateListOf()
+
     /** 出错时的说明（渲染在气泡下方） */
     var error by mutableStateOf<String?>(null)
 
@@ -135,10 +145,14 @@ class ChatDisplayMessage(
         blocks += ChatBlock.Tool(ChatToolBlock(id, name, title))
     }
 
-    fun finishTool(id: String, isError: Boolean, preview: String?) {
+    /**
+     * 给工具块补终态。[resultText] 是**原始工具结果**（带围栏），摘要在这里成型 ——
+     * 流式与重开会话两条路径都走这里，摘要口径因此只有一份。
+     */
+    fun finishTool(id: String, isError: Boolean, resultText: String?) {
         val block = findTool(id) ?: return
         block.status = if (isError) ChatToolBlock.Status.FAILED else ChatToolBlock.Status.SUCCESS
-        block.resultPreview = preview
+        block.resultPreview = toolPreview(resultText)
     }
 
     /**
@@ -157,4 +171,38 @@ class ChatDisplayMessage(
 
     private fun findTool(id: String): ChatToolBlock? =
         blocks.filterIsInstance<ChatBlock.Tool>().firstOrNull { it.block.id == id }?.block
+
+    companion object {
+        /**
+         * 结果摘要的码点上限。双端同值 —— 同一次调用展开看到的东西不该因端而异。
+         *
+         * 取值比工具结果上限（[AiFence.MAX_RESULT_CHARS] = 6000）小一个量级：
+         * 这是「扫一眼确认 AI 没瞎编」的量，不是全文阅读器。
+         */
+        const val TOOL_PREVIEW_MAX_CHARS = 400
+
+        internal const val TOOL_PREVIEW_ELLIPSIS = "…"
+
+        /**
+         * 工具结果 → 折叠态可展开的摘要。
+         *
+         * 先剥围栏（界面上不该出现划给模型看的边界），再按**码点**截断
+         * （与 [AiFence.fence] 同口径，永不切断一个字符）。
+         */
+        internal fun toolPreview(resultText: String?): String? {
+            val body = AiFence.unfence(resultText.orEmpty())
+            if (body.isEmpty()) return null
+            if (body.codePointCount(0, body.length) <= TOOL_PREVIEW_MAX_CHARS) return body
+            val sb = StringBuilder()
+            var i = 0
+            var n = 0
+            while (i < body.length && n < TOOL_PREVIEW_MAX_CHARS) {
+                val cp = body.codePointAt(i)
+                sb.appendCodePoint(cp)
+                i += Character.charCount(cp)
+                n++
+            }
+            return sb.toString() + TOOL_PREVIEW_ELLIPSIS
+        }
+    }
 }

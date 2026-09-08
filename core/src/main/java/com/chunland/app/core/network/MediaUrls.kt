@@ -1,13 +1,16 @@
 package com.chunland.app.core.network
 
 /**
- * API 基址持有者 —— 由 [com.chunland.app.core.CoreGraph] 构造时写入。
+ * API 基址取用点 —— 由 [com.chunland.app.core.CoreGraph] 构造时注入。
  * :core 是 library module，读不到 :app 的 BuildConfig（也不该感知构建配置），
  * 故基址从 :app 单向注入进来，下面两个顶层函数的调用点保持不变。
+ *
+ * 存 provider 而非快照：Debug 下用户可切服务器地址，图片与合规页地址必须跟着变。
+ * 存字符串就得多一个写入方去同步，迟早漏。
  */
 object MediaConfig {
     @Volatile
-    var apiBaseUrl: String = ""
+    var baseUrlProvider: () -> String = { "" }
 }
 
 /**
@@ -21,4 +24,5 @@ fun absoluteMediaUrl(url: String?): String? = when {
 }
 
 /** 当前 API 的站点 origin。静态合规页（/terms /privacy /support）随服务器走，不硬编码域名。 */
-fun serverOrigin(): String = MediaConfig.apiBaseUrl.removeSuffix("/").removeSuffix("/api/v1")
+fun serverOrigin(): String =
+    MediaConfig.baseUrlProvider().removeSuffix("/").removeSuffix("/api/v1")

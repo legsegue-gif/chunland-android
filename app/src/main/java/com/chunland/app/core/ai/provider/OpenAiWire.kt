@@ -196,6 +196,9 @@ object OpenAiWire {
                     }
                 }
 
+                // 卡片是给用户看的，**绝不上 wire** —— 它不参与模型推理，
+                // 上了只是白占上下文，而且模型会开始转述卡片里的数字
+                is AgentContentPart.Cards -> Unit
                 is AgentContentPart.ToolUse -> Unit   // user 消息里不应出现工具调用
             }
         }

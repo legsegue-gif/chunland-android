@@ -1,6 +1,7 @@
 package com.chunland.app.core.ai.loop
 
 import android.util.Log
+import com.chunland.app.core.ai.domain.AgentCard
 import com.chunland.app.core.ai.domain.AgentContentPart
 import com.chunland.app.core.ai.domain.AgentHistoryIntegrity
 import com.chunland.app.core.ai.domain.AgentMessage
@@ -13,6 +14,7 @@ import com.chunland.app.core.ai.provider.FallbackRecord
 import com.chunland.app.core.ai.provider.LlmError
 import com.chunland.app.core.ai.provider.ProviderRouter
 import com.chunland.app.core.ai.provider.SessionModelBinding
+import com.chunland.app.core.logging.AiDebugFileLog
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -37,7 +39,23 @@ sealed interface AgentLoopEvent {
 
     /** 工具开始执行。[title] 是模型自述的「在做什么」 */
     data class ToolStarted(val id: String, val name: String, val title: String?) : AgentLoopEvent
-    data class ToolFinished(val id: String, val name: String, val isError: Boolean) : AgentLoopEvent
+    /**
+     * 工具执行完毕。[resultText] 是原始结果（带围栏），UI 拿它成摘要 ——
+     * 不带的话流式期间那个块就只有状态没有内容，展不开。
+     */
+    data class ToolFinished(
+        val id: String,
+        val name: String,
+        val isError: Boolean,
+        val resultText: String?,
+    ) : AgentLoopEvent
+
+    /**
+     * 结构化卡片（R3）—— **给用户看的那一份，不喂给模型**。
+     * 与 Cards 历史 part 是同一批数据：这个事件负责流式期间的展示，
+     * 历史 part 负责重开会话后仍在。
+     */
+    data class Cards(val cards: List<AgentCard>) : AgentLoopEvent
 
     /** 发生了模型降级，应告知用户 */
     data class Fallback(val record: FallbackRecord) : AgentLoopEvent
@@ -205,6 +223,11 @@ class AgentLoop(
                 router.stream(binding, history.toList(), systemPrompt, tools)
             } catch (e: Throwable) {
                 val error = LlmError.fromThrowable(e)
+                AiDebugFileLog.response(
+                    outcome = if (error.isCancellation) "cancelled" else "openFailed",
+                    text = null,
+                    detail = error.userMessage,
+                )
                 emit(AgentLoopEvent.Finished(
                     if (error.isCancellation) AgentLoopEnd.Cancelled
                     else AgentLoopEnd.Failed(error.userMessage)
@@ -213,17 +236,41 @@ class AgentLoop(
             }
             routed.fallbacks.forEach { emit(AgentLoopEvent.Fallback(it)) }
 
+            // 请求落盘放在开流之后：model 要用**实际选中的**那个（可能已经降级过），
+            // 开流前记等于记了一个可能没被用上的模型。对齐 iOS AgentLoop.swift 的同一处注释。
+            AiDebugFileLog.request(
+                model = routed.entry.modelId,
+                toolNames = tools.map { it.name },
+                messages = history.toList(),
+            )
+
             // 消费流
             val result = try {
                 consume(routed.stream) { emit(it) }
             } catch (e: Throwable) {
                 val error = LlmError.fromThrowable(e)
+                AiDebugFileLog.response(
+                    outcome = if (error.isCancellation) "cancelled" else "streamFailed",
+                    text = null,
+                    detail = error.userMessage,
+                )
                 emit(AgentLoopEvent.Finished(
                     if (error.isCancellation) AgentLoopEnd.Cancelled
                     else AgentLoopEnd.Failed(error.userMessage)
                 ))
                 return@flow
             }
+
+            // 本轮产出（工具调用也是产出的一种形态）
+            AiDebugFileLog.response(
+                outcome = if (result.toolEntries.isEmpty()) {
+                    result.stopReason?.name ?: "interrupted"
+                } else {
+                    "toolCalls"
+                },
+                text = result.text,
+                toolNames = result.toolEntries.map { it.name },
+            )
 
             lastContextTokens = result.usage.contextTokens
             if (result.usage.contextTokens > 0) emit(AgentLoopEvent.Usage(result.usage))
@@ -275,7 +322,18 @@ class AgentLoop(
             val outcomes = pipeline.executeBatch(result.toolEntries, tools)
             outcomes.forEach { outcome ->
                 emit(AgentLoopEvent.ToolStarted(outcome.toolId, outcome.toolName, outcome.title))
-                emit(AgentLoopEvent.ToolFinished(outcome.toolId, outcome.toolName, outcome.isError))
+                emit(AgentLoopEvent.ToolFinished(
+                    outcome.toolId, outcome.toolName, outcome.isError,
+                    (outcome.part as? AgentContentPart.ToolResult)?.text,
+                ))
+            }
+            // 卡片挂到刚才那条 assistant 上 —— 它是「这一轮助手做了什么」的载体。
+            // wire 层会跳过 Cards，所以不占上下文、模型也无从转述卡片里的数字。
+            val cards = executor.drainCards()
+            if (cards.isNotEmpty() && history.isNotEmpty()) {
+                val last = history.removeAt(history.lastIndex)
+                history += last.copy(parts = last.parts + AgentContentPart.Cards(cards))
+                emit(AgentLoopEvent.Cards(cards))   // 流式期间也要立刻显示，不能等重开会话
             }
             history += AgentMessage.toolResults(outcomes.map { it.part })
 

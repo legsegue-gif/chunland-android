@@ -1,16 +1,6 @@
 package com.chunland.app.core.ai.tools
 
 import com.chunland.app.core.AppGraph
-import com.chunland.app.core.network.apiCall
-import com.chunland.app.data.model.AddCategoryRequest
-import com.chunland.app.data.model.AdjustmentDetail
-import com.chunland.app.data.model.AdjustmentItem
-import com.chunland.app.data.model.CreateSchemeRequest
-import com.chunland.app.data.model.ProposeAdjustmentRequest
-import com.chunland.app.data.model.SetCategoryProductsRequest
-import com.chunland.app.data.model.settlementStatusLabel
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -44,30 +34,9 @@ private fun agentSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
             ),
         ),
         kind = AiToolName.Kind.READ_ONLY,
-        run = { args, _ ->
-            val status = args.string("status")
-            val (d, orders) = coroutineScope {
-                val dash = async { apiCall { graph.agentProfileApi.dashboard() } }
-                val list = async { apiCall { graph.orderApi.list(status = status, scope = "mine") } }
-                dash.await() to list.await()
-            }
-            val c = d.counts
-            var out = "待办概览：待买家支付 ${c.claimed}｜待采购 ${c.paid}" +
-                "｜采购中 ${c.purchasing}（缺小票 ${c.purchasingNoReceipt}、" +
-                "改单待答复 ${c.purchasingPendingAdjustment}）" +
-                "｜配送中 ${c.delivering}｜待买家确认 ${c.delivered}"
-
-            out += if (orders.isEmpty()) {
-                if (status != null) "\n该状态下暂无订单。" else "\n还没有接过单。"
-            } else {
-                val lines = orders.take(20).joinToString("\n") { o ->
-                    "#${o.orderNumber}（id:${o.id}）｜${claimStatusLabel(o.status)}｜¥${agentMoney(o.totalAmount)}"
-                }
-                "\n接单列表（共 ${orders.size} 笔）：\n$lines" +
-                    "\n（某单详情用 get_order_detail，order_id 传上面的 id）"
-            }
-            out
-        },
+        remote = true,
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：list_my_claims 的工具体在服务端，不应走本地执行。" },
     ),
 
     AgentToolSpec(
@@ -78,26 +47,9 @@ private fun agentSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
                 "并标注各单小票凭证状态。进店采购前调用。**每次重新调用获取最新数据。**",
         ),
         kind = AiToolName.Kind.READ_ONLY,
-        run = { _, _ ->
-            val list = apiCall { graph.agentProfileApi.purchaseList() }
-            if (list.groups.isEmpty()) {
-                "当前没有待采购的订单（待采购/采购中状态才会进清单）。"
-            } else {
-                list.groups.joinToString("\n\n") { g ->
-                    val items = g.items.joinToString("\n") { item ->
-                        val size = item.selectedSize?.let { "（尺码 $it）" } ?: ""
-                        val from = item.breakdown.joinToString("、") {
-                            "…${it.orderNumber.takeLast(6)} ×${it.quantity}"
-                        }
-                        "· ${item.name}$size ×${item.totalQuantity}（来自 $from）"
-                    }
-                    val receipts = g.orders.joinToString("、") { o ->
-                        "…${o.orderNumber.takeLast(6)}（id:${o.id}）${if (o.hasReceipt) "已传小票" else "待传小票"}"
-                    }
-                    "【${g.merchantName}】${g.orders.size} 单 ${g.items.size} 种商品\n$items\n小票状态：$receipts"
-                }
-            }
-        },
+        remote = true,
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：build_purchase_list 的工具体在服务端，不应走本地执行。" },
     ),
 
     AgentToolSpec(
@@ -109,21 +61,9 @@ private fun agentSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
                 "**每次重新调用获取最新数据。**",
         ),
         kind = AiToolName.Kind.READ_ONLY,
-        run = { _, _ ->
-            val s = apiCall { graph.agentProfileApi.settlements() }
-            var out = "待结算 ¥${agentMoney(s.pendingTotal)}｜已结算 ¥${agentMoney(s.paidTotal)}"
-            out += if (s.items.isEmpty()) {
-                "\n还没有结算记录（订单完成后自动记账）。"
-            } else {
-                val lines = s.items.take(15).joinToString("\n") { r ->
-                    "#${r.orderNumber}｜应结 ¥${agentMoney(r.netPayable)}" +
-                        "（货款 ¥${agentMoney(r.itemsReimburse)} + 代购费 ¥${agentMoney(r.agentFee)}）" +
-                        "｜${settlementStatusLabel(r.status)}"
-                }
-                "\n最近结算（共 ${s.items.size} 笔）：\n$lines"
-            }
-            out
-        },
+        remote = true,
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：summarize_settlements 的工具体在服务端，不应走本地执行。" },
     ),
 
     AgentToolSpec(
@@ -145,6 +85,7 @@ private fun agentSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
             required = listOf("order_id", "order_item_id", "action"),
         ),
         kind = AiToolName.Kind.MUTATION,
+        remote = true,
         intentSummary = { args ->
             val itemId = args.int("order_item_id") ?: 0
             val what = if (args.string("action") == "remove") {
@@ -154,43 +95,8 @@ private fun agentSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
             }
             "对订单 #${args.int("order_id") ?: 0} 发起缺货改单：$what（提交后需买家确认）"
         },
-        run = { args, _ ->
-            val orderId = args.int("order_id")
-            val itemId = args.int("order_item_id")
-            val action = args.string("action")
-            val newQuantity = args.int("new_quantity")
-            when {
-                orderId == null || itemId == null || action !in listOf("remove", "reduce_qty") ->
-                    "参数不全：需要 order_id、order_item_id 和 action（remove/reduce_qty）。" +
-                        "可先用 get_order_detail 查条目 id。"
-
-                action == "reduce_qty" && newQuantity == null ->
-                    "action=reduce_qty 时必须提供 new_quantity（下调后的数量）。"
-
-                else -> {
-                    val adj = apiCall {
-                        graph.orderApi.proposeAdjustment(
-                            orderId,
-                            ProposeAdjustmentRequest(
-                                kind = "out_of_stock",
-                                detail = AdjustmentDetail(
-                                    items = listOf(
-                                        AdjustmentItem(
-                                            orderItemId = itemId,
-                                            action = action!!,
-                                            newQuantity = newQuantity,
-                                        ),
-                                    ),
-                                ),
-                                note = args.string("note"),
-                            ),
-                        )
-                    }
-                    "改单已提交（金额变化 ¥${agentMoney(adj.amountDelta)}），等待买家确认。" +
-                        "买家接受后差额自动部分退款。"
-                }
-            }
-        },
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：propose_adjustment 的工具体在服务端，不应走本地执行。" },
     ),
 )
 
@@ -209,18 +115,9 @@ private fun merchantSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
                 "做分类归类前必须先调用它拿到商品清单。**每次重新调用获取最新数据。**",
         ),
         kind = AiToolName.Kind.READ_ONLY,
-        run = { _, _ ->
-            val products = apiCall { graph.merchantConsoleApi.products() }.items
-            if (products.isEmpty()) {
-                "店里还没有商品。"
-            } else {
-                val lines = products.joinToString("\n") { p ->
-                    val price = p.price?.let { "¥${agentMoney(it)}" } ?: "-"
-                    "${p.code}｜${p.name}｜$price｜${if (p.purchasable) "在售" else "已下架"}"
-                }
-                "店铺商品（共 ${products.size} 件）：\n$lines"
-            }
-        },
+        remote = true,
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：list_store_products 的工具体在服务端，不应走本地执行。" },
     ),
 
     AgentToolSpec(
@@ -231,27 +128,9 @@ private fun merchantSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
                 "归类商品前先调用它拿 category_id。**每次重新调用获取最新数据。**",
         ),
         kind = AiToolName.Kind.READ_ONLY,
-        run = { _, _ ->
-            val schemes = apiCall { graph.merchantConsoleApi.schemes() }.items
-            if (schemes.isEmpty()) {
-                "还没有分类方案。可用 create_category_scheme 创建（如「吃穿住行用」）。"
-            } else {
-                schemes.joinToString("\n") { s ->
-                    val cats = s.categories.flatMap { c ->
-                        listOf("  - ${c.name}（category_id:${c.id}，${c.productCount ?: 0} 件）") +
-                            c.children.map {
-                                "    · ${it.name}（category_id:${it.id}，${it.productCount ?: 0} 件，二级，属「${c.name}」）"
-                            }
-                    }
-                    val flags = listOfNotNull(
-                        "默认".takeIf { s.isDefault },
-                        "已隐藏".takeIf { s.isVisible == false },
-                    ).joinToString("、")
-                    "【${s.name}】${if (flags.isEmpty()) "" else "（$flags）"}\n" +
-                        (if (cats.isEmpty()) "  （还没有分类）" else cats.joinToString("\n"))
-                }
-            }
-        },
+        remote = true,
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：list_category_schemes 的工具体在服务端，不应走本地执行。" },
     ),
 
     AgentToolSpec(
@@ -271,6 +150,7 @@ private fun merchantSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
             required = listOf("name", "categories"),
         ),
         kind = AiToolName.Kind.MUTATION,
+        remote = true,
         intentSummary = { args ->
             // 摘要要给人读 —— 原样回显 JSON 等于让用户在确认框里读代码。
             // 参数原文仍在 details 里（确认框的安全语义是「看到什么就执行什么」）。
@@ -281,43 +161,8 @@ private fun merchantSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
             } ?: raw
             "创建分类方案「${args.string("name") ?: ""}」，包含分类：$desc"
         },
-        run = { args, _ ->
-            val name = args.string("name") ?: ""
-            val drafts = AgentSchemeInput.parse(args.string("categories") ?: "")
-            when {
-                name.isEmpty() -> "缺少方案名。"
-                drafts == null -> "缺少分类列表（逗号分隔或 JSON 数组）。"
-                else -> {
-                    // origin=ai 记方案来源，供 AI 分类溯源（与归类的 assignedBy 同一条线）
-                    val scheme = apiCall {
-                        graph.merchantConsoleApi.createScheme(CreateSchemeRequest(name, origin = "ai"))
-                    }
-                    for (draft in drafts) {
-                        val created = apiCall {
-                            graph.merchantConsoleApi.addSchemeCategory(scheme.id, AddCategoryRequest(draft.name))
-                        }
-                        for (child in draft.children) {
-                            apiCall {
-                                graph.merchantConsoleApi.addSchemeCategory(
-                                    scheme.id,
-                                    AddCategoryRequest(child, parentId = created.id),
-                                )
-                            }
-                        }
-                    }
-                    // 回读一次拿 category_id —— 归类要用它，不回读模型就得再调一次 list
-                    val fresh = apiCall { graph.merchantConsoleApi.schemes() }.items
-                        .firstOrNull { it.id == scheme.id }
-                    val catList = (fresh?.categories ?: emptyList()).joinToString("、") { c ->
-                        val subs = c.children.joinToString("、") { "${it.name}（category_id:${it.id}）" }
-                        "${c.name}（category_id:${c.id}${if (subs.isEmpty()) "" else "，子分类：$subs"}）"
-                    }
-                    "方案「$name」已创建。分类：$catList。" +
-                        "接下来可用 assign_category_products 把商品归入各分类" +
-                        "（每个分类调用一次、给全量 code）。"
-                }
-            }
-        },
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：create_category_scheme 的工具体在服务端，不应走本地执行。" },
     ),
 
     AgentToolSpec(
@@ -334,26 +179,13 @@ private fun merchantSpecs(graph: AppGraph): List<AgentToolSpec> = listOf(
             required = listOf("category_id", "product_codes"),
         ),
         kind = AiToolName.Kind.MUTATION,
+        remote = true,
         intentSummary = { args ->
             val count = AgentSchemeInput.codes(args.string("product_codes") ?: "").size
             "归类到分类 #${args.int("category_id") ?: 0}：共 $count 件商品（整体替换）"
         },
-        run = { args, _ ->
-            val categoryId = args.int("category_id")
-            if (categoryId == null) {
-                "需要 category_id（分类的数字 id），可用 list_category_schemes 查。"
-            } else {
-                val codes = AgentSchemeInput.codes(args.string("product_codes") ?: "")
-                apiCall {
-                    graph.merchantConsoleApi.setCategoryProducts(
-                        categoryId,
-                        // assignedBy=ai 记归类来源，供 AI 分类溯源
-                        SetCategoryProductsRequest(codes, assignedBy = "ai"),
-                    )
-                }
-                "已把 ${codes.size} 件商品归入分类 #$categoryId（整体替换）。"
-            }
-        },
+        // 工具体在服务端（R5）。run 不可达 —— 注册表见 remote=true 就直接打端点。
+        run = { _, _ -> "内部错误：assign_category_products 的工具体在服务端，不应走本地执行。" },
     ),
 )
 
